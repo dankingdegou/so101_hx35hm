@@ -1,0 +1,50 @@
+servo:
+  device: "/dev/ros_robot_controller"
+  pos_min: 0
+  pos_max: 1000
+  range_deg: 240.0
+  default_duration_s: 1.0
+
+# Joint -> servo mapping and calibration knobs used by the assembly script.
+#
+# Meaning:
+# - servo_id: HX-35HM bus servo ID (must match what you wrote to the servo)
+# - direction: +1 or -1 (flip if motion direction is reversed)
+# - zero_pos: servo position (0..1000) that corresponds to joint angle 0 rad
+#
+# Start point (safe-ish for first power-on):
+# - keep all zero_pos=500, direction=+1
+# Then refine per joint after mechanical alignment.
+joints:
+  shoulder_pan:
+    servo_id: 1
+    direction: -1
+    zero_pos: 500
+  shoulder_lift:
+    servo_id: 2
+    direction: -1
+    zero_pos: 500
+  elbow_flex:
+    servo_id: 3
+    direction: 1
+    zero_pos: 500
+  wrist_flex:
+    servo_id: 4
+    direction: -1
+    zero_pos: 500
+  wrist_roll:
+    servo_id: 5
+    direction: 1
+    zero_pos: 500
+  gripper:
+    servo_id: 6
+    direction: 1
+    zero_pos: 500
+
+# Optional gripper helpers (SRDF manipulator poses do not include gripper).
+gripper:
+  neutral_pos: 500
+  # If you want to drive gripper in radians (MoveIt SRDF has open/closed):
+  open_rad: 1.5
+  closed_rad: -0.16
+
