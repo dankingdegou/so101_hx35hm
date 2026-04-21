@@ -1,0 +1,30 @@
+{
+  "meta": {
+    "tool": "auto_motion_aruco_sampler.py",
+    "count": 0,
+    "pose_topic": "/vision/aruco/pose_camera",
+    "joint_state_topic": "/follower/joint_states",
+    "command_topic": "/follower/forward_controller/commands",
+    "base_frame": "base_link",
+    "tool_frame": "moving_jaw_so101_v1_link",
+    "marker_x_range_m": [
+      -0.2,
+      0.1
+    ],
+    "marker_y_range_m": [
+      -0.16,
+      0.1
+    ],
+    "marker_z_range_m": [
+      0.16,
+      0.45
+    ],
+    "marker_bins": [
+      4,
+      3,
+      3
+    ],
+    "max_samples_per_bin": 2
+  },
+  "samples": []
+}

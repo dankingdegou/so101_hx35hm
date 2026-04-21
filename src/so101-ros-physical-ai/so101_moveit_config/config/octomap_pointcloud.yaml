@@ -1,0 +1,25 @@
+move_group:
+  ros__parameters:
+    # OctoMap (occupancy map) configuration for MoveIt collision checking.
+    # Using base_link avoids needing world->base_link TF, while still being stable for a fixed-base arm.
+    octomap_frame: base_link
+    octomap_resolution: 0.02
+
+    # List of updater namespaces (strings). Each updater's parameters are read
+    # from `<name>.<param>` keys below.
+    sensors: ["overhead_depth"]
+
+    overhead_depth.sensor_plugin: "occupancy_map_monitor/PointCloudOctomapUpdater"
+    # so101_openni2_camera publishes "points" as a relative topic, so with:
+    #   namespace: static_camera
+    #   name: depth_overhead
+    # the actual topic is:
+    #   /static_camera/points
+    overhead_depth.point_cloud_topic: "/static_camera/points"
+    overhead_depth.max_range: 2.5
+    overhead_depth.point_subsample: 1
+    overhead_depth.padding_offset: 0.02
+    overhead_depth.padding_scale: 1.0
+    # Optional. The minimal updater implementation in this workspace currently
+    # does not publish a filtered cloud.
+    overhead_depth.filtered_cloud_topic: ""

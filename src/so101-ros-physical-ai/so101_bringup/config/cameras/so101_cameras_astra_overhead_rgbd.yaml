@@ -1,0 +1,12 @@
+cameras:
+  # RGB (UVC) for overhead view
+  - name: cam_overhead
+    camera_type: gscam
+    param_path: so101_gs_cam_astra_overhead.yaml
+    namespace: static_camera
+
+  # Depth / Pointcloud via OpenNI2 for the same physical camera
+  - name: depth_overhead
+    camera_type: so101_openni2_camera
+    param_path: so101_openni2.yaml
+    namespace: static_camera

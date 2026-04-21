@@ -23,6 +23,7 @@ setup(
             "hx35hm_bridge = so101_hx35hm_bridge.bridge_node:main",
             "aruco_detector = so101_hx35hm_bridge.aruco_detector_node:main",
             "red_circle_detector = so101_hx35hm_bridge.red_circle_detector_node:main",
+            "table_plane_estimator = so101_hx35hm_bridge.table_plane_estimator_node:main",
         ],
     },
 )

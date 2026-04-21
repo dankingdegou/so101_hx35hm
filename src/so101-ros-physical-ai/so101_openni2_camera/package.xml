@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>so101_openni2_camera</name>
+  <version>0.0.1</version>
+  <description>OpenNI2-based depth camera node for Orbbec Astra-class devices, integrated for the SO101 stack.</description>
+
+  <maintainer email="rog@example.com">rog</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

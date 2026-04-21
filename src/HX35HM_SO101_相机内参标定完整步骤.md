@@ -30,6 +30,8 @@
 注意：
 
 - 脚本里的 `--cols 9 --rows 6 --square-size-mm 20` 指的是内部角点和单格尺寸
+- `9 x 6` 指的是内部角点，不是黑白格数量
+- 如果你的棋盘是 `10 x 7` 个格子，那么内部角点才是 `9 x 6`
 - 如果你打印的不是 `20mm`，命令里的 `--square-size-mm` 必须同步改
 
 ---
@@ -48,6 +50,20 @@
 
 这意味着你标定完成后，不需要再改 `camera_info_url`，只需要重启相机节点即可生效。
 
+当前推荐的 RGB-only 相机启动配置：
+
+- [so101_cameras_overhead_rgb.yaml](/home/rog/ros2_ws/src/so101-ros-physical-ai/so101_bringup/config/cameras/so101_cameras_overhead_rgb.yaml)
+
+如果你后面要看更小的 ArUco，可以切到我新补的 `1280x720` 配置：
+
+- [so101_cameras_overhead_rgb_720.yaml](/home/rog/ros2_ws/src/so101-ros-physical-ai/so101_bringup/config/cameras/so101_cameras_overhead_rgb_720.yaml)
+
+注意：
+
+- 分辨率一旦从 `640x480` 切到 `1280x720`，内参必须重新标定
+- 你现在已经做好的 [cam_overhead_calib.yaml](/home/rog/ros2_ws/src/so101-ros-physical-ai/so101_bringup/config/cameras/cam_overhead_calib.yaml) 只对应当前 `640x480`
+- 新的 `1280x720` 配置默认先读占位文件 [cam_overhead_calib_placeholder_720.yaml](/home/rog/ros2_ws/src/so101-ros-physical-ai/so101_bringup/config/cameras/cam_overhead_calib_placeholder_720.yaml)，方便先把图像起起来
+
 ---
 
 ## 3. 编译并 source
@@ -55,22 +71,75 @@
 先开一个终端：
 
 ```bash
-cd ~/ros2_ws/src
+cd ~/ros2_ws
 source /opt/ros/jazzy/setup.bash
-colcon build --packages-select so101_bringup --symlink-install
-source ~/ros2_ws/src/install/setup.bash
+export COLCON_PYTHON_EXECUTABLE=/usr/bin/python3
+colcon build --packages-select so101_bringup \
+  --symlink-install \
+  --cmake-clean-cache \
+  --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3
+source ~/ros2_ws/install/setup.bash
 ```
+
+如果构建阶段出现旧 Python 路径，比如 `/home/rog/.local/bin/python3.11`，或者报 `catkin_pkg` 缺失，优先怀疑的是旧的 CMake 缓存而不是当前代码。上面这套命令已经会强制切到 `/usr/bin/python3` 并清理旧缓存。
+
+这份文档下面的推荐主流程只需要 `so101_bringup`。
+
+只有当你故意要走 `RGB + OpenNI2 depth` 的相机链路时，才需要额外构建 `so101_openni2_camera`。
 
 ---
 
 ## 4. 启动 overhead RGB 相机
 
-建议先只启动相机，不开额外 detector：
+推荐优先走 `RGB-only` 主流程，因为这次做的是 **overhead RGB 内参标定**，不需要把机械臂、MoveIt、深度相机和 detector 一起拉起来。
+
+### 4.1 推荐：只启动 overhead RGB
 
 ```bash
-cd ~/ros2_ws/src
+cd ~/ros2_ws
 source /opt/ros/jazzy/setup.bash
-source ~/ros2_ws/src/install/setup.bash
+source ~/ros2_ws/install/setup.bash
+
+ros2 launch so101_bringup cameras.launch.py \
+  cameras_config:=/home/rog/ros2_ws/src/so101-ros-physical-ai/so101_bringup/config/cameras/so101_cameras_overhead_rgb.yaml
+```
+
+这样只会启动：
+
+- overhead RGB 相机
+- `/static_camera/image_raw`
+- `/static_camera/camera_info`
+
+### 4.1.1 如果 ArUco 太小，切到 1280x720
+
+```bash
+cd ~/ros2_ws
+source /opt/ros/jazzy/setup.bash
+source ~/ros2_ws/install/setup.bash
+
+ros2 launch so101_bringup cameras.launch.py \
+  cameras_config:=/home/rog/ros2_ws/src/so101-ros-physical-ai/so101_bringup/config/cameras/so101_cameras_overhead_rgb_720.yaml
+```
+
+这套配置的思路是：
+
+- RGB 提升到 `1280x720`
+- 使用这只 UVC 相机真实支持的 `1280x720@30`
+- 更适合看偏小的 ArUco
+
+但要注意：
+
+- 如果你要用这套分辨率做位姿估计，请重新做一遍内参标定
+- 标定输出不要再写回旧的 `640x480` 文件
+- 建议保存成新的 `cam_overhead_calib_720.yaml`
+- 做 ArUco 外参/手眼时，优先用 `RGB-only 720p`，没必要默认把 depth 一起带上
+
+### 4.2 备选：沿用你后面视觉抓取那套整机链路
+
+```bash
+cd ~/ros2_ws
+source /opt/ros/jazzy/setup.bash
+source ~/ros2_ws/install/setup.bash
 
 ros2 launch so101_bringup follower_hx35hm_moveit.launch.py \
   use_cameras:=true \
@@ -80,16 +149,54 @@ ros2 launch so101_bringup follower_hx35hm_moveit.launch.py \
   use_red_detector:=false
 ```
 
-如果你只想看相机，不关心机械臂 bringup，也可以直接起 cameras：
+这个备选方式也能标定，但它会同时拉起：
+
+- 机械臂桥接
+- MoveIt
+- 相机
+
+所以只适合你已经确认整机 bringup 很稳定，或者你就是想顺手验证整条视觉链路的时候用。
+
+### 4.3 备选：如果你想连 depth 一起起
 
 ```bash
-cd ~/ros2_ws/src
+cd ~/ros2_ws
 source /opt/ros/jazzy/setup.bash
-source ~/ros2_ws/src/install/setup.bash
+source ~/ros2_ws/install/setup.bash
 
 ros2 launch so101_bringup cameras.launch.py \
   cameras_config:=/home/rog/ros2_ws/src/so101-ros-physical-ai/so101_bringup/config/cameras/so101_cameras_astra_overhead_rgbd.yaml
 ```
+
+注意：
+
+- 这条命令会额外启动 `so101_openni2_camera`
+- 对 **RGB 内参标定本身** 没有必要
+- 只有你后面想顺手联调 `RGBD` 链路时才建议用
+
+如果你是为了更小的 ArUco 做联调，也可以切到我新补的 `RGBD + 1280x720 RGB` 版本：
+
+```bash
+cd ~/ros2_ws
+source /opt/ros/jazzy/setup.bash
+source ~/ros2_ws/install/setup.bash
+
+ros2 launch so101_bringup follower_hx35hm_moveit.launch.py \
+  use_cameras:=true \
+  use_rviz:=false \
+  use_joint_gui:=true \
+  use_aruco_detector:=true \
+  use_red_detector:=false \
+  cameras_config:=/home/rog/ros2_ws/src/so101-ros-physical-ai/so101_bringup/config/cameras/so101_cameras_astra_overhead_rgbd_720.yaml
+```
+
+注意：
+
+- 这只是把 RGB 画面提到 `1280x720`，depth 仍然是原来的 OpenNI2 配置
+- RGB 这边会使用相机支持的 `1280x720@30`
+- 因为 depth 仍然同时开启，USB 带宽压力会更高
+- 如果设备起不来，先退回 `640x480`，再考虑单独确认相机支持的分辨率
+- 如果你只是为了看更小的 ArUco，优先改用上面的 `RGB-only 720p`，通常更稳
 
 ---
 
@@ -98,9 +205,9 @@ ros2 launch so101_bringup cameras.launch.py \
 另开一个终端：
 
 ```bash
-cd ~/ros2_ws/src
+cd ~/ros2_ws
 source /opt/ros/jazzy/setup.bash
-source ~/ros2_ws/src/install/setup.bash
+source ~/ros2_ws/install/setup.bash
 ```
 
 检查：
@@ -112,6 +219,8 @@ ros2 topic echo /static_camera/camera_info --once
 
 只要 RGB 图像在稳定发布，就可以继续。
 
+如果你走的是推荐的 `RGB-only` 主流程，这一步就足够了，不需要去关心 `/static_camera/depth/*`。
+
 ---
 
 ## 6. 启动内参标定脚本
@@ -119,9 +228,9 @@ ros2 topic echo /static_camera/camera_info --once
 再开一个终端，执行：
 
 ```bash
-cd ~/ros2_ws/src
+cd ~/ros2_ws
 source /opt/ros/jazzy/setup.bash
-source ~/ros2_ws/src/install/setup.bash
+source ~/ros2_ws/install/setup.bash
 
 python3 ~/ros2_ws/src/so101-ros-physical-ai/tools/camera_intrinsics/calibrate_ros_camera_intrinsics.py \
   --image-topic /static_camera/image_raw \
@@ -279,9 +388,9 @@ U
 重启相机后，再开一个终端检查：
 
 ```bash
-cd ~/ros2_ws/src
+cd ~/ros2_ws
 source /opt/ros/jazzy/setup.bash
-source ~/ros2_ws/src/install/setup.bash
+source ~/ros2_ws/install/setup.bash
 
 ros2 topic echo /static_camera/camera_info --once
 ```

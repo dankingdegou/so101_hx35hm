@@ -1,0 +1,19 @@
+/**:
+  ros__parameters:
+    camera_info_url: "package://so101_bringup/config/cameras/cam_overhead_calib_placeholder_320.yaml"
+    use_sensor_data_qos: false
+    sync_sink: false
+    use_gst_timestamps: true
+    image_encoding: "rgb8"
+
+
+/static_camera/cam_overhead:
+  ros__parameters:
+    frame_id: "cam_overhead"
+    camera_name: "cam_overhead"
+    camera_info_url: "package://so101_bringup/config/cameras/cam_overhead_calib_placeholder_320.yaml"
+    # Low-bandwidth RGB stream to coexist with depth on USB2 more reliably.
+    gscam_config: >
+      v4l2src device=/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera_SN0001-video-index0 io-mode=2 do-timestamp=true !
+      image/jpeg,width=320,height=240,framerate=30/1 !
+      jpegdec ! videoconvert

@@ -1,0 +1,9 @@
+# Keep empty by default.
+#
+# moveit_configs_utils will try to load this file automatically. If it contains
+# a non-empty `sensors:` list, it will be merged into move_group parameters.
+# In ROS 2 launch, nested YAML list-of-dicts can be problematic, so we keep this
+# as a stub and enable OctoMap via a separate parameter file/launch arg.
+
+sensors: []
+

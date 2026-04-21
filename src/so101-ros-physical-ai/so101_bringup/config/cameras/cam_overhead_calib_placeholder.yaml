@@ -1,0 +1,30 @@
+# Placeholder camera calibration for cam_overhead.
+# This exists mainly to silence gscam's repeated "calibration file not found" warnings.
+# Replace with a real calibration (camera_calibration / kalibr) if you need metric accuracy.
+image_width: 640
+image_height: 480
+camera_name: cam_overhead
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [600.0, 0.0, 319.5,
+         0.0, 600.0, 239.5,
+         0.0, 0.0, 1.0]
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [0.0, 0.0, 0.0, 0.0, 0.0]
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data: [1.0, 0.0, 0.0,
+         0.0, 1.0, 0.0,
+         0.0, 0.0, 1.0]
+projection_matrix:
+  rows: 3
+  cols: 4
+  data: [600.0, 0.0, 319.5, 0.0,
+         0.0, 600.0, 239.5, 0.0,
+         0.0, 0.0, 1.0, 0.0]
+

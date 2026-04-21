@@ -1,0 +1,11 @@
+cameras:
+  - name: cam_overhead
+    camera_type: gscam
+    param_path: so101_gs_cam_astra_overhead_320.yaml
+    namespace: static_camera
+
+  - name: depth_overhead
+    camera_type: so101_openni2_camera
+    param_path: so101_openni2_320.yaml
+    namespace: static_camera
+

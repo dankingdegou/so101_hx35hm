@@ -1,0 +1,5 @@
+cameras:
+  - name: cam_overhead
+    camera_type: gscam
+    param_path: so101_gs_cam_astra_overhead_720.yaml
+    namespace: static_camera

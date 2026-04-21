@@ -1,0 +1,10 @@
+[flake8]
+# This repo prioritizes launch/runtime correctness over strict formatting.
+# Keep CI green by ignoring style-only rules that don't affect behavior.
+ignore =
+  D200,D205,D400,D401,
+  E501,
+  I100,I101,I201,
+  Q000,
+  W391
+max-line-length = 99

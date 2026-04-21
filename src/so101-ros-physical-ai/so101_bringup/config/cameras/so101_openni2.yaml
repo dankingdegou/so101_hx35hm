@@ -1,0 +1,33 @@
+/**:
+  ros__parameters:
+    # OpenNI2 node defaults for Astra-class depth cameras
+    # Depth image:
+    #   topic: depth/image_raw (encoding 16UC1, unit=mm)
+    # Pointcloud:
+    #   topic: points (XYZ, meters)
+    device_uri: ""              # empty => ANY_DEVICE
+    publish_depth: true
+    publish_camera_info: true
+    publish_pointcloud: false
+
+    depth_width: 640
+    depth_height: 480
+    depth_fps: 30
+
+    # Throttle pointcloud to keep CPU reasonable.
+    pointcloud_hz: 10.0
+    pointcloud_stride: 4
+    pointcloud_min_range_m: 0.15
+    pointcloud_max_range_m: 2.50
+
+
+/static_camera/depth_overhead:
+  ros__parameters:
+    # Keep depth on its own frame so RGB-D extrinsics can be calibrated/refined
+    # explicitly via TF (cam_overhead -> cam_overhead_depth).
+    frame_id: "cam_overhead_depth"
+
+
+/follower/depth_wrist:
+  ros__parameters:
+    frame_id: "cam_wrist"

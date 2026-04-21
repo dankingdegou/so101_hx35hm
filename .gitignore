@@ -2,6 +2,9 @@
 build/
 install/
 log/
+src/build/
+src/install/
+src/log/
 
 # Colcon / CMake
 cmake-build-*/
@@ -22,10 +25,15 @@ __pycache__/
 # IDE
 .vscode/
 .idea/
+.codex/
+src/.codex/
 
 # System
 .DS_Store
 Thumbs.db
+
+# Nested repo backup when flattening embedded git repos
+*.git.embedded-backup
 
 # Environment / secrets
 .env

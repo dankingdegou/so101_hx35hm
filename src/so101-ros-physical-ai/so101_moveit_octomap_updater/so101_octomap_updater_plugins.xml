@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<library path="so101_moveit_octomap_updater">
+  <!--
+    MoveIt is trying to load this exact class id in your config:
+      occupancy_map_monitor/PointCloudOctomapUpdater
+
+    Some ROS installs provide it via moveit_ros_perception, but your system does not.
+    We provide a minimal compatible implementation here.
+  -->
+  <class
+    name="occupancy_map_monitor/PointCloudOctomapUpdater"
+    type="so101_moveit_octomap_updater::PointCloudOctomapUpdater"
+    base_class_type="occupancy_map_monitor::OccupancyMapUpdater">
+    <description>Build an OctoMap from a PointCloud2 topic (minimal implementation for SO101).</description>
+  </class>
+</library>
+

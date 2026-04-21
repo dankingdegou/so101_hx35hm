@@ -44,6 +44,15 @@ JOINT_ID_MAP: Dict[str, int] = {
     "gripper": 6,
 }
 
+JOINT_LIMITS_RAD: Dict[str, tuple[float, float]] = {
+    "shoulder_pan": (-1.91986, 1.91986),
+    "shoulder_lift": (-1.74533, 1.74533),
+    "elbow_flex": (-1.69, 1.69),
+    "wrist_flex": (-1.65806, 1.65806),
+    "wrist_roll": (-2.74385, 2.84121),
+    "gripper": (-0.523599, 1.74533),
+}
+
 
 class Hx35hmBridgeNode(Node):
     def __init__(self) -> None:
@@ -62,6 +71,9 @@ class Hx35hmBridgeNode(Node):
         self.declare_parameter("state_publish_rate_hz", 50.0)
         self.declare_parameter("trajectory_command_rate_hz", 30.0)
         self.declare_parameter("trajectory_min_command_interval_s", 0.03)
+        self.declare_parameter("trajectory_min_segment_duration_s", 0.12)
+        self.declare_parameter("trajectory_min_total_duration_s", 0.80)
+        self.declare_parameter("trajectory_final_settle_s", 0.20)
         self.declare_parameter("suspend_readback_during_trajectory", True)
         # 是否开启 FollowJointTrajectory 动作服务（用于 MoveIt）
         self.declare_parameter("enable_follow_joint_trajectory", True)
@@ -117,6 +129,15 @@ class Hx35hmBridgeNode(Node):
         )
         self.trajectory_min_command_interval_s = float(
             self.get_parameter("trajectory_min_command_interval_s").get_parameter_value().double_value
+        )
+        self.trajectory_min_segment_duration_s = float(
+            self.get_parameter("trajectory_min_segment_duration_s").get_parameter_value().double_value
+        )
+        self.trajectory_min_total_duration_s = float(
+            self.get_parameter("trajectory_min_total_duration_s").get_parameter_value().double_value
+        )
+        self.trajectory_final_settle_s = float(
+            self.get_parameter("trajectory_final_settle_s").get_parameter_value().double_value
         )
         self.suspend_readback_during_trajectory = bool(
             self.get_parameter("suspend_readback_during_trajectory")
@@ -209,6 +230,7 @@ class Hx35hmBridgeNode(Node):
 
         # Warn once per joint if we have to clip commanded positions into servo_pos_min/max.
         self._clip_warned = set()
+        self._joint_limit_warned = set()
 
         # 当前关节的"已知姿态"（用于发布 joint_states），初始设为 0 rad，
         # 后续在 send_positions 中更新。
@@ -345,6 +367,13 @@ class Hx35hmBridgeNode(Node):
             pos_int = int(round(pos))
             bus_positions.append([servo_id, pos_int])
 
+            if name == "gripper":
+                self.get_logger().info(
+                    "Gripper command mapping: "
+                    f"target_rad={angle_rad:+.3f}, direction={direction}, "
+                    f"zero_pos={zero_pos:.1f}, servo_pos={pos_int}, duration={duration:.3f}s"
+                )
+
             # 记录当前姿态，供 publish_joint_states 使用
             try:
                 idx = self.joint_names.index(name)
@@ -363,7 +392,7 @@ class Hx35hmBridgeNode(Node):
                     effective_angle_deg = (pos - zero_pos) / (direction * pos_per_deg)
                     effective_angle_rad = effective_angle_deg * math.pi / 180.0
 
-                self.current_positions[idx] = effective_angle_rad
+                self.current_positions[idx] = self._clamp_joint_position(name, effective_angle_rad)
             except ValueError:
                 pass
 
@@ -383,6 +412,10 @@ class Hx35hmBridgeNode(Node):
             target = float(command.position[0])
 
         duration = float(self.move_duration)
+        self.get_logger().info(
+            f"Received ParallelGripperCommand goal: target={target:+.3f} rad, "
+            f"duration={duration:.3f}s"
+        )
         self.send_positions(["gripper"], [target], duration)
 
         # Best-effort wait.
@@ -402,6 +435,15 @@ class Hx35hmBridgeNode(Node):
                     break
             time.sleep(0.02)
 
+        if idx is not None:
+            cur = float(self.current_positions[idx])
+            self.get_logger().info(
+                f"Gripper goal complete: target={target:+.3f} rad, "
+                f"current={cur:+.3f} rad, reached={reached}"
+            )
+        else:
+            self.get_logger().warn("Gripper joint is not present in joint_names; reporting best-effort success")
+
         goal_handle.succeed()
 
         result = ParallelGripperCommand.Result()
@@ -415,13 +457,20 @@ class Hx35hmBridgeNode(Node):
 
     def command_callback(self, msg: Float64MultiArray) -> None:
         # 用于简单 forward_controller 指令
-        if len(msg.data) != len(self.joint_names):
+        if len(msg.data) == len(self.joint_names) - 1 and "gripper" in self.joint_names:
+            # Arm-only commands from cartesian_motion_node intentionally omit the
+            # gripper so the gripper action server remains the single owner.
+            joint_names = [name for name in self.joint_names if name != "gripper"]
+        elif len(msg.data) == len(self.joint_names):
+            joint_names = self.joint_names
+        else:
             self.get_logger().warn(
-                f"Command length {len(msg.data)} does not match joint_names length {len(self.joint_names)}"
+                f"Command length {len(msg.data)} does not match arm-only "
+                f"({len(self.joint_names) - 1}) or full ({len(self.joint_names)}) joint command length"
             )
             return
 
-        self.send_positions(self.joint_names, list(msg.data), self.move_duration)
+        self.send_positions(joint_names, list(msg.data), self.move_duration)
 
     def execute_trajectory_callback(self, goal_handle):
         """FollowJointTrajectory 动作执行回调（用于 MoveIt）."""
@@ -465,10 +514,92 @@ class Hx35hmBridgeNode(Node):
             return FollowJointTrajectory.Result()
 
         total_duration = filtered_points[-1][0]
+        if len(filtered_points) == 1 or total_duration <= 1e-6:
+            single_point_duration = max(
+                self.trajectory_min_total_duration_s,
+                self.trajectory_final_settle_s,
+                self.move_duration,
+                0.2,
+            )
+            try:
+                current_by_name = {
+                    name: self.current_positions[self.joint_names.index(name)]
+                    for name in mapped_joint_names
+                    if name in self.joint_names
+                }
+                final_by_name = {
+                    name: filtered_points[-1][1][idx]
+                    for idx, name in enumerate(mapped_joint_names)
+                }
+                current_summary = ", ".join(
+                    f"{name}={current_by_name.get(name, 0.0):+.3f}" for name in mapped_joint_names
+                )
+                final_summary = ", ".join(
+                    f"{name}={final_by_name.get(name, 0.0):+.3f}" for name in mapped_joint_names
+                )
+                self.get_logger().info(f"Single-point current joints: {current_summary}")
+                self.get_logger().info(f"Single-point final joints:   {final_summary}")
+            except Exception:
+                pass
+            self.get_logger().info(
+                f"Executing single-point trajectory on {mapped_joint_names} over "
+                f"{single_point_duration:.3f}s"
+            )
+            self.send_positions(mapped_joint_names, filtered_points[-1][1], single_point_duration)
+            settle_deadline = time.monotonic() + single_point_duration
+            while time.monotonic() < settle_deadline:
+                if goal_handle.is_cancel_requested:
+                    goal_handle.canceled()
+                    return FollowJointTrajectory.Result()
+                time.sleep(0.01)
+
+            self.get_logger().info(
+                f"FollowJointTrajectory goal succeeded with {len(traj.points)} points"
+            )
+            goal_handle.succeed()
+            return FollowJointTrajectory.Result()
+
+        if self.trajectory_min_total_duration_s > 0.0 and total_duration < self.trajectory_min_total_duration_s:
+            raw_duration = max(total_duration, 1e-6)
+            scale = self.trajectory_min_total_duration_s / raw_duration
+            filtered_points = [(t * scale, positions) for (t, positions) in filtered_points]
+            total_duration = filtered_points[-1][0]
+            self.get_logger().info(
+                f"Stretching short trajectory from {raw_duration:.3f}s to {total_duration:.3f}s "
+                f"(scale={scale:.2f}) for physical execution"
+            )
+
         sample_dt = 0.0
         if self.trajectory_command_rate_hz > 0.0:
             sample_dt = 1.0 / self.trajectory_command_rate_hz
         sample_dt = max(sample_dt, self.trajectory_min_command_interval_s)
+        sample_dt = max(sample_dt, self.trajectory_min_segment_duration_s)
+
+        self.get_logger().info(
+            f"Executing trajectory on {mapped_joint_names} with {len(filtered_points)} points "
+            f"over {total_duration:.3f}s (sample_dt={sample_dt:.3f}s)"
+        )
+        final_positions = filtered_points[-1][1]
+        try:
+            current_by_name = {
+                name: self.current_positions[self.joint_names.index(name)]
+                for name in mapped_joint_names
+                if name in self.joint_names
+            }
+            final_by_name = {
+                name: final_positions[idx]
+                for idx, name in enumerate(mapped_joint_names)
+            }
+            current_summary = ", ".join(
+                f"{name}={current_by_name.get(name, 0.0):+.3f}" for name in mapped_joint_names
+            )
+            final_summary = ", ".join(
+                f"{name}={final_by_name.get(name, 0.0):+.3f}" for name in mapped_joint_names
+            )
+            self.get_logger().info(f"Trajectory current joints: {current_summary}")
+            self.get_logger().info(f"Trajectory final joints:   {final_summary}")
+        except Exception:
+            pass
 
         if self.suspend_readback_during_trajectory:
             # Writing and reading on the same serial bus during dense trajectory
@@ -488,12 +619,22 @@ class Hx35hmBridgeNode(Node):
                 time.sleep(remaining)
 
             target_positions = self._sample_trajectory_positions(filtered_points, sample_time)
-            next_time = max(sample_dt, self._next_sample_delta(sample_times, sample_index))
+            next_time = max(
+                sample_dt,
+                self.trajectory_min_segment_duration_s,
+                self._next_sample_delta(sample_times, sample_index),
+            )
             self.send_positions(mapped_joint_names, target_positions, next_time)
 
         # Make sure the final point is resent with a small settle time.
-        final_positions = filtered_points[-1][1]
-        self.send_positions(mapped_joint_names, final_positions, max(sample_dt, 0.05))
+        final_settle = max(sample_dt, self.trajectory_final_settle_s, 0.05)
+        self.send_positions(mapped_joint_names, final_positions, final_settle)
+        settle_deadline = time.monotonic() + final_settle
+        while time.monotonic() < settle_deadline:
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                return FollowJointTrajectory.Result()
+            time.sleep(0.01)
 
         self.get_logger().info(
             f"FollowJointTrajectory goal succeeded with {len(traj.points)} points"
@@ -539,6 +680,24 @@ class Hx35hmBridgeNode(Node):
 
         return list(filtered_points[-1][1])
 
+    def _clamp_joint_position(self, joint_name: str, angle_rad: float) -> float:
+        limits = JOINT_LIMITS_RAD.get(joint_name)
+        if limits is None:
+            return angle_rad
+
+        lower, upper = limits
+        # Keep a tiny margin inside the MoveIt bounds so start-state checks do not
+        # reject a pose due to floating-point noise or encoder jitter near the limit.
+        epsilon = 1e-4
+        clamped = min(max(angle_rad, lower + epsilon), upper - epsilon)
+        if clamped != angle_rad and joint_name not in self._joint_limit_warned:
+            self.get_logger().warn(
+                f"Clamped readback for joint '{joint_name}' from {angle_rad:.4f} rad "
+                f"into MoveIt limits [{lower:.4f}, {upper:.4f}]"
+            )
+            self._joint_limit_warned.add(joint_name)
+        return clamped
+
     def _do_initial_readback(self) -> None:
         """启动时立即读取所有舵机位置，确保MoveIt获得正确的初始状态"""
         servo_span = float(self.servo_pos_max - self.servo_pos_min)
@@ -560,6 +719,7 @@ class Hx35hmBridgeNode(Node):
                     
                     angle_deg = (pos - zero_pos) / (direction * pos_per_deg)
                     angle_rad = angle_deg * math.pi / 180.0
+                    angle_rad = self._clamp_joint_position(joint_name, angle_rad)
                     self.current_positions[idx] = angle_rad
                     
                     self.get_logger().info(
@@ -641,6 +801,7 @@ class Hx35hmBridgeNode(Node):
             # invert mapping: angle_deg = (pos - zero_pos) / (direction * pos_per_deg)
             angle_deg = (pos - zero_pos) / (direction * pos_per_deg)
             angle_rad = angle_deg * math.pi / 180.0
+            angle_rad = self._clamp_joint_position(joint_name, angle_rad)
             self.current_positions[idx] = angle_rad
             updated += 1
             self._readback_success_count += 1

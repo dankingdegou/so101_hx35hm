@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>so101_moveit_octomap_updater</name>
+  <version>0.0.1</version>
+  <description>MoveIt OccupancyMapUpdater plugin: build an OctoMap from PointCloud2 for SO101.</description>
+
+  <maintainer email="rog@example.com">rog</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_sensor_msgs</depend>
+  <depend>pluginlib</depend>
+
+  <depend>moveit_ros_occupancy_map_monitor</depend>
+  <depend>moveit_core</depend>
+  <depend>octomap</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
+

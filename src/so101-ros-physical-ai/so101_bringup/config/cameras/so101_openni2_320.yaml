@@ -1,0 +1,20 @@
+/**:
+  ros__parameters:
+    device_uri: ""
+    publish_depth: true
+    publish_camera_info: true
+    publish_pointcloud: true
+
+    depth_width: 320
+    depth_height: 240
+    depth_fps: 30
+
+    pointcloud_hz: 10.0
+    pointcloud_stride: 2
+    pointcloud_min_range_m: 0.15
+    pointcloud_max_range_m: 2.50
+
+
+/static_camera/depth_overhead:
+  ros__parameters:
+    frame_id: "cam_overhead_depth"

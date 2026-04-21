@@ -1,0 +1,29 @@
+# Placeholder camera calibration for cam_overhead at 320x240.
+# Replace with a real calibration if needed.
+image_width: 320
+image_height: 240
+camera_name: cam_overhead
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [300.0, 0.0, 159.5,
+         0.0, 300.0, 119.5,
+         0.0, 0.0, 1.0]
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [0.0, 0.0, 0.0, 0.0, 0.0]
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data: [1.0, 0.0, 0.0,
+         0.0, 1.0, 0.0,
+         0.0, 0.0, 1.0]
+projection_matrix:
+  rows: 3
+  cols: 4
+  data: [300.0, 0.0, 159.5, 0.0,
+         0.0, 300.0, 119.5, 0.0,
+         0.0, 0.0, 1.0, 0.0]
+

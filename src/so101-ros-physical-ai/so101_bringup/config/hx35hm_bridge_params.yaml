@@ -1,0 +1,10 @@
+# HX35HM Bridge parameters
+hx35hm_bridge:
+  ros__parameters:
+    device: "/dev/ros_robot_controller"
+    publish_joint_states_topic: "joint_states"
+    enable_follow_joint_trajectory: true
+    enable_gripper_action: true
+    enable_position_readback: true
+    joint_directions: [1, -1, 1, -1, 1, 1]
+    joint_zero_positions: [500.0, 500.0, 500.0, 500.0, 500.0, 500.0]

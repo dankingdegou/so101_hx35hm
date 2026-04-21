@@ -1,0 +1,47 @@
+/**:
+  ros__parameters:
+    # Minimal, stable defaults for bringing up a D4xx-style RealSense in this project.
+    # Notes:
+    # - Our bringup normalizes topics in cameras.launch.py:
+    #     color/image_raw            -> image_raw
+    #     color/camera_info          -> camera_info
+    #     aligned_depth_to_color/... -> depth/...
+    # - If you plug in two RealSense cameras, fill the per-node serial_no below.
+
+    enable_color: true
+    enable_depth: true
+    enable_sync: true
+
+    # Make depth align to color so downstream perception has a single pixel frame.
+    align_depth.enable: true
+
+    # Publish TF for the camera-internal frames (optical frames etc).
+    # We still provide the external mount TF in so101_bringup/launch/camera_tf.launch.py.
+    publish_tf: true
+    tf_publish_rate: 1.0
+
+    # Keep bandwidth reasonable for bringup/inference.
+    # You can bump these later if you need more depth quality.
+    rgb_camera.color_profile: "640x480x30"
+    depth_module.profile: "640x480x30"
+
+    # If you want pointcloud directly from the driver, enable it here.
+    # (MoveIt octomap integration will typically consume a PointCloud2.)
+    pointcloud.enable: true
+
+
+# Wrist-mounted RealSense (mounted on the follower end-effector)
+/follower/cam_wrist:
+  ros__parameters:
+    # Fill this when you have >1 camera connected. Leave empty to use the first device.
+    # serial_no: "000000000000"
+    camera_name: "cam_wrist"
+    base_frame_id: "cam_wrist"
+
+
+# Overhead RealSense (static mount)
+/static_camera/cam_overhead:
+  ros__parameters:
+    # serial_no: "000000000000"
+    camera_name: "cam_overhead"
+    base_frame_id: "cam_overhead"
