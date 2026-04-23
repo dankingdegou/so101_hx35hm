@@ -329,7 +329,7 @@ ros2 launch so101_grasping so101_visual_grasp.launch.py \
 ros2 launch so101_grasping so101_visual_grasp.launch.py \
   execute:=false \
   pose_topic:=/vision/red_block/pose_base \
-  add_table_collision:=false \
+  add_table_collision:=true \
   min_grasp_clearance_m:=0.015 \
   min_pregrasp_clearance_m:=0.080 \
   grasp_x_offset_m:=0.025 \
@@ -351,7 +351,7 @@ ros2 launch so101_grasping so101_visual_grasp.launch.py \
 - `pose_sample_count=5`
 - `min_pose_sample_count=3`
 - `max_pose_spread_m=0.03`
-- `post_rest_settle_s=1.0`
+- `post_rest_settle_s=0.4`
 - `pregrasp_offset_m=0.08`
 - `hover_high_offset_m=0.04`
 - `use_two_stage_pregrasp=true`
@@ -474,13 +474,20 @@ ros2 launch so101_bringup follower_hx35hm_moveit.launch.py \
 
 如果日志是 `Target pose` 本身就不对，但规划一路成功，那不是规划问题。
 
-如果只是在最后回 `rest` 失败，优先使用：
+如果只是在最后回 `rest` 失败，优先排查：
+
+- 是否启用了 `add_table_collision:=true`
+- `tabletop_guard` 的范围是不是过大
+- `joint_states` 是否稳定
+- MoveIt 的 start state 是否被桌面碰撞或关节漂移卡住
+
+当前默认主路线仍然建议保留：
 
 ```bash
-post_grasp_use_ik_joints:=true
+post_grasp_use_ik_joints:=false
 ```
 
-这会绕开 MoveIt named target 的执行链，改用 `/go_to_joints` 直接回 `rest`。
+也就是继续让最后回 `rest` 走 MoveIt named target，而不是切回 `/go_to_joints` 绕行。
 
 ### 9.5 如果报“等待稳定红球位姿超时”
 

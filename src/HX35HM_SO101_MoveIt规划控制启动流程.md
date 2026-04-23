@@ -78,7 +78,6 @@ source /opt/ros/jazzy/setup.bash
 source ~/ros2_ws/install/setup.bash
 
 ros2 launch so101_bringup follower_hx35hm_moveit.launch.py \
-  use_hx35hm:=true \
   use_cameras:=false \
   use_rviz:=true \
   use_joint_gui:=false \
@@ -96,7 +95,6 @@ ros2 launch so101_bringup follower_hx35hm_moveit.launch.py \
 
 说明：
 
-- `use_hx35hm:=true` 会让 follower 的 ros2_control 侧走 mock，避免去碰 Feetech 那条硬件链路。
 - 真正控制 HX35HM 的，是 `so101_hx35hm_bridge`。
 - 这个启动方式适合你现在的机械臂控制层调试。
 
@@ -235,7 +233,6 @@ MoveIt 的语义状态定义在：
 
 ```bash
 ros2 launch so101_bringup follower_hx35hm_moveit.launch.py \
-  use_hx35hm:=true \
   use_cameras:=false \
   use_rviz:=true \
   use_joint_gui:=false \
@@ -247,7 +244,6 @@ ros2 launch so101_bringup follower_hx35hm_moveit.launch.py \
 
 ```bash
 ros2 launch so101_bringup follower_hx35hm_moveit.launch.py \
-  use_hx35hm:=true \
   use_cameras:=false \
   use_rviz:=true \
   use_joint_gui:=true \
@@ -304,7 +300,7 @@ Ctrl+C
 对 HX35HM 真机来说，MoveIt 规划控制的主入口就是：
 
 ```bash
-ros2 launch so101_bringup follower_hx35hm_moveit.launch.py use_hx35hm:=true
+ros2 launch so101_bringup follower_hx35hm_moveit.launch.py
 ```
 
 其余参数主要是为了让你更安全地调试和减少干扰。

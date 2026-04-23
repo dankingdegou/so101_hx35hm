@@ -67,13 +67,14 @@ class Hx35hmBridgeNode(Node):
         self.declare_parameter("joint_names", list(JOINT_ID_MAP.keys()))
         self.declare_parameter("command_topic", "/follower/forward_controller/commands")
         self.declare_parameter("move_duration", 0.2)
+        self.declare_parameter("stream_command_duration", 0.04)
         self.declare_parameter("publish_joint_states_topic", "/joint_states")
         self.declare_parameter("state_publish_rate_hz", 50.0)
-        self.declare_parameter("trajectory_command_rate_hz", 30.0)
-        self.declare_parameter("trajectory_min_command_interval_s", 0.03)
-        self.declare_parameter("trajectory_min_segment_duration_s", 0.12)
-        self.declare_parameter("trajectory_min_total_duration_s", 0.80)
-        self.declare_parameter("trajectory_final_settle_s", 0.20)
+        self.declare_parameter("trajectory_command_rate_hz", 50.0)
+        self.declare_parameter("trajectory_min_command_interval_s", 0.015)
+        self.declare_parameter("trajectory_min_segment_duration_s", 0.02)
+        self.declare_parameter("trajectory_min_total_duration_s", 0.60)
+        self.declare_parameter("trajectory_final_settle_s", 0.05)
         self.declare_parameter("suspend_readback_during_trajectory", True)
         # 是否开启 FollowJointTrajectory 动作服务（用于 MoveIt）
         self.declare_parameter("enable_follow_joint_trajectory", True)
@@ -115,6 +116,9 @@ class Hx35hmBridgeNode(Node):
 
         self.move_duration = (
             self.get_parameter("move_duration").get_parameter_value().double_value
+        )
+        self.stream_command_duration = float(
+            self.get_parameter("stream_command_duration").get_parameter_value().double_value
         )
         state_topic = (
             self.get_parameter("publish_joint_states_topic")
@@ -470,7 +474,10 @@ class Hx35hmBridgeNode(Node):
             )
             return
 
-        self.send_positions(joint_names, list(msg.data), self.move_duration)
+        duration = self.stream_command_duration
+        if duration <= 0.0:
+            duration = self.move_duration
+        self.send_positions(joint_names, list(msg.data), duration)
 
     def execute_trajectory_callback(self, goal_handle):
         """FollowJointTrajectory 动作执行回调（用于 MoveIt）."""
@@ -506,7 +513,10 @@ class Hx35hmBridgeNode(Node):
 
             t = point.time_from_start.sec + point.time_from_start.nanosec * 1e-9
             positions_rad = [float(point.positions[i]) for i in valid_indices]
-            filtered_points.append((t, positions_rad))
+            velocities_rad = None
+            if len(point.velocities) >= len(joint_names):
+                velocities_rad = [float(point.velocities[i]) for i in valid_indices]
+            filtered_points.append((t, positions_rad, velocities_rad))
 
         if not filtered_points:
             self.get_logger().error("No valid trajectory points after filtering")
@@ -562,7 +572,10 @@ class Hx35hmBridgeNode(Node):
         if self.trajectory_min_total_duration_s > 0.0 and total_duration < self.trajectory_min_total_duration_s:
             raw_duration = max(total_duration, 1e-6)
             scale = self.trajectory_min_total_duration_s / raw_duration
-            filtered_points = [(t * scale, positions) for (t, positions) in filtered_points]
+            filtered_points = [
+                (t * scale, positions, velocities)
+                for (t, positions, velocities) in filtered_points
+            ]
             total_duration = filtered_points[-1][0]
             self.get_logger().info(
                 f"Stretching short trajectory from {raw_duration:.3f}s to {total_duration:.3f}s "
@@ -573,7 +586,9 @@ class Hx35hmBridgeNode(Node):
         if self.trajectory_command_rate_hz > 0.0:
             sample_dt = 1.0 / self.trajectory_command_rate_hz
         sample_dt = max(sample_dt, self.trajectory_min_command_interval_s)
-        sample_dt = max(sample_dt, self.trajectory_min_segment_duration_s)
+        sample_dt = min(sample_dt, self.trajectory_min_segment_duration_s) if self.trajectory_min_segment_duration_s > 0.0 else sample_dt
+        if sample_dt <= 0.0:
+            sample_dt = 0.02
 
         self.get_logger().info(
             f"Executing trajectory on {mapped_joint_names} with {len(filtered_points)} points "
@@ -620,14 +635,13 @@ class Hx35hmBridgeNode(Node):
 
             target_positions = self._sample_trajectory_positions(filtered_points, sample_time)
             next_time = max(
-                sample_dt,
-                self.trajectory_min_segment_duration_s,
+                self.trajectory_min_command_interval_s,
                 self._next_sample_delta(sample_times, sample_index),
             )
             self.send_positions(mapped_joint_names, target_positions, next_time)
 
         # Make sure the final point is resent with a small settle time.
-        final_settle = max(sample_dt, self.trajectory_final_settle_s, 0.05)
+        final_settle = max(self.trajectory_min_command_interval_s, self.trajectory_final_settle_s, 0.03)
         self.send_positions(mapped_joint_names, final_positions, final_settle)
         settle_deadline = time.monotonic() + final_settle
         while time.monotonic() < settle_deadline:
@@ -663,19 +677,33 @@ class Hx35hmBridgeNode(Node):
         return self.trajectory_min_command_interval_s
 
     def _sample_trajectory_positions(
-        self, filtered_points: List[tuple[float, List[float]]], sample_time: float
+        self, filtered_points: List[tuple[float, List[float], List[float] | None]], sample_time: float
     ) -> List[float]:
         if sample_time <= filtered_points[0][0]:
             return list(filtered_points[0][1])
 
         for idx in range(1, len(filtered_points)):
-            t1, p1 = filtered_points[idx]
+            t1, p1, v1 = filtered_points[idx]
             if sample_time <= t1:
-                t0, p0 = filtered_points[idx - 1]
+                t0, p0, v0 = filtered_points[idx - 1]
                 dt = t1 - t0
                 if dt <= 1e-6:
                     return list(p1)
-                alpha = (sample_time - t0) / dt
+                alpha = max(0.0, min(1.0, (sample_time - t0) / dt))
+
+                # Prefer cubic Hermite interpolation when trajectory velocities are available.
+                if v0 is not None and v1 is not None and len(v0) == len(p0) and len(v1) == len(p1):
+                    a2 = alpha * alpha
+                    a3 = a2 * alpha
+                    h00 = 2.0 * a3 - 3.0 * a2 + 1.0
+                    h10 = a3 - 2.0 * a2 + alpha
+                    h01 = -2.0 * a3 + 3.0 * a2
+                    h11 = a3 - a2
+                    return [
+                        h00 * p0[j] + h10 * dt * v0[j] + h01 * p1[j] + h11 * dt * v1[j]
+                        for j in range(len(p0))
+                    ]
+
                 return [p0[j] + alpha * (p1[j] - p0[j]) for j in range(len(p0))]
 
         return list(filtered_points[-1][1])

@@ -24,6 +24,8 @@ def generate_launch_description():
     pregrasp_y_offset_m = LaunchConfiguration("pregrasp_y_offset_m")
     pregrasp_z_extra_m = LaunchConfiguration("pregrasp_z_extra_m")
     use_two_stage_pregrasp = LaunchConfiguration("use_two_stage_pregrasp")
+    continuous_approach_mode = LaunchConfiguration("continuous_approach_mode")
+    retreat_to_hover_high = LaunchConfiguration("retreat_to_hover_high")
     enforce_table_z_limits = LaunchConfiguration("enforce_table_z_limits")
     tabletop_z_m = LaunchConfiguration("tabletop_z_m")
     use_tabletop_z_topic = LaunchConfiguration("use_tabletop_z_topic")
@@ -59,6 +61,8 @@ def generate_launch_description():
     staging_named_pose = LaunchConfiguration("staging_named_pose")
     return_to_named_pose_after_grasp = LaunchConfiguration("return_to_named_pose_after_grasp")
     post_grasp_named_pose = LaunchConfiguration("post_grasp_named_pose")
+    post_grasp_return_vel_scaling = LaunchConfiguration("post_grasp_return_vel_scaling")
+    post_grasp_return_acc_scaling = LaunchConfiguration("post_grasp_return_acc_scaling")
     post_grasp_use_ik_joints = LaunchConfiguration("post_grasp_use_ik_joints")
     ik_joints_service_name = LaunchConfiguration("ik_joints_service_name")
     ik_post_grasp_duration_s = LaunchConfiguration("ik_post_grasp_duration_s")
@@ -100,7 +104,7 @@ def generate_launch_description():
             DeclareLaunchArgument("pose_sample_count", default_value="5"),
             DeclareLaunchArgument("min_pose_sample_count", default_value="3"),
             DeclareLaunchArgument("max_pose_spread_m", default_value="0.03"),
-            DeclareLaunchArgument("post_rest_settle_s", default_value="1.0"),
+            DeclareLaunchArgument("post_rest_settle_s", default_value="0.4"),
             DeclareLaunchArgument("grasp_x_offset_m", default_value="0.0"),
             DeclareLaunchArgument("grasp_y_offset_m", default_value="0.0"),
             DeclareLaunchArgument("grasp_z_offset_m", default_value="-0.015"),
@@ -110,6 +114,8 @@ def generate_launch_description():
             DeclareLaunchArgument("pregrasp_y_offset_m", default_value="0.0"),
             DeclareLaunchArgument("pregrasp_z_extra_m", default_value="0.0"),
             DeclareLaunchArgument("use_two_stage_pregrasp", default_value="true"),
+            DeclareLaunchArgument("continuous_approach_mode", default_value="true"),
+            DeclareLaunchArgument("retreat_to_hover_high", default_value="true"),
             DeclareLaunchArgument("enforce_table_z_limits", default_value="true"),
             DeclareLaunchArgument("tabletop_z_m", default_value="0.0"),
             DeclareLaunchArgument("use_tabletop_z_topic", default_value="true"),
@@ -133,33 +139,35 @@ def generate_launch_description():
             DeclareLaunchArgument("ik_pregrasp_strategy", default_value="joint_quintic"),
             DeclareLaunchArgument("ik_grasp_strategy", default_value="cartesian"),
             DeclareLaunchArgument("ik_retreat_strategy", default_value="cartesian"),
-            DeclareLaunchArgument("ik_pregrasp_duration_s", default_value="1.8"),
-            DeclareLaunchArgument("ik_grasp_duration_s", default_value="1.2"),
-            DeclareLaunchArgument("ik_retreat_duration_s", default_value="1.2"),
+            DeclareLaunchArgument("ik_pregrasp_duration_s", default_value="1.7"),
+            DeclareLaunchArgument("ik_grasp_duration_s", default_value="1.1"),
+            DeclareLaunchArgument("ik_retreat_duration_s", default_value="1.1"),
             DeclareLaunchArgument("ik_pose_service_timeout_s", default_value="8.0"),
-            DeclareLaunchArgument("ik_pregrasp_settle_s", default_value="0.35"),
-            DeclareLaunchArgument("ik_grasp_settle_s", default_value="0.25"),
-            DeclareLaunchArgument("ik_retreat_settle_s", default_value="0.25"),
+            DeclareLaunchArgument("ik_pregrasp_settle_s", default_value="0.08"),
+            DeclareLaunchArgument("ik_grasp_settle_s", default_value="0.04"),
+            DeclareLaunchArgument("ik_retreat_settle_s", default_value="0.04"),
             DeclareLaunchArgument("position_only", default_value="true"),
             DeclareLaunchArgument("go_to_rest_before_grasp", default_value="false"),
             DeclareLaunchArgument("staging_named_pose", default_value="extended"),
             DeclareLaunchArgument("return_to_named_pose_after_grasp", default_value="false"),
             DeclareLaunchArgument("post_grasp_named_pose", default_value="rest"),
+            DeclareLaunchArgument("post_grasp_return_vel_scaling", default_value="0.12"),
+            DeclareLaunchArgument("post_grasp_return_acc_scaling", default_value="0.12"),
             DeclareLaunchArgument("open_gripper_after_return", default_value="true"),
-            DeclareLaunchArgument("post_return_gripper_settle_s", default_value="0.4"),
+            DeclareLaunchArgument("post_return_gripper_settle_s", default_value="0.15"),
             DeclareLaunchArgument("post_grasp_lift_before_return", default_value="false"),
             DeclareLaunchArgument("post_grasp_return_lift_z_m", default_value="0.14"),
             DeclareLaunchArgument("post_grasp_return_lift_extra_m", default_value="0.04"),
             DeclareLaunchArgument("ik_post_grasp_lift_strategy", default_value="cartesian"),
             DeclareLaunchArgument("ik_post_grasp_lift_duration_s", default_value="1.2"),
-            DeclareLaunchArgument("ik_post_grasp_lift_settle_s", default_value="0.25"),
+            DeclareLaunchArgument("ik_post_grasp_lift_settle_s", default_value="0.05"),
             DeclareLaunchArgument("post_grasp_return_via_rest_hover", default_value="false"),
             DeclareLaunchArgument("post_grasp_rest_hover_x_m", default_value="0.20"),
             DeclareLaunchArgument("post_grasp_rest_hover_y_m", default_value="0.0"),
             DeclareLaunchArgument("post_grasp_rest_hover_z_m", default_value="0.14"),
             DeclareLaunchArgument("ik_post_grasp_rest_hover_strategy", default_value="cartesian"),
             DeclareLaunchArgument("ik_post_grasp_rest_hover_duration_s", default_value="1.4"),
-            DeclareLaunchArgument("ik_post_grasp_rest_hover_settle_s", default_value="0.25"),
+            DeclareLaunchArgument("ik_post_grasp_rest_hover_settle_s", default_value="0.05"),
             DeclareLaunchArgument("post_grasp_use_ik_joints", default_value="false"),
             DeclareLaunchArgument("ik_joints_service_name", default_value="/go_to_joints"),
             DeclareLaunchArgument("ik_post_grasp_duration_s", default_value="2.4"),
@@ -202,6 +210,8 @@ def generate_launch_description():
                         "pregrasp_y_offset_m": pregrasp_y_offset_m,
                         "pregrasp_z_extra_m": pregrasp_z_extra_m,
                         "use_two_stage_pregrasp": use_two_stage_pregrasp,
+                        "continuous_approach_mode": continuous_approach_mode,
+                        "retreat_to_hover_high": retreat_to_hover_high,
                         "enforce_table_z_limits": enforce_table_z_limits,
                         "tabletop_z_m": tabletop_z_m,
                         "use_tabletop_z_topic": use_tabletop_z_topic,
@@ -237,6 +247,8 @@ def generate_launch_description():
                         "staging_named_pose": staging_named_pose,
                         "return_to_named_pose_after_grasp": return_to_named_pose_after_grasp,
                         "post_grasp_named_pose": post_grasp_named_pose,
+                        "post_grasp_return_vel_scaling": post_grasp_return_vel_scaling,
+                        "post_grasp_return_acc_scaling": post_grasp_return_acc_scaling,
                         "open_gripper_after_return": LaunchConfiguration("open_gripper_after_return"),
                         "post_return_gripper_settle_s": LaunchConfiguration("post_return_gripper_settle_s"),
                         "post_grasp_lift_before_return": post_grasp_lift_before_return,

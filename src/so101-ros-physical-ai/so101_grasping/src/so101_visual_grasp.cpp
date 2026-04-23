@@ -408,11 +408,23 @@ static bool plan_and_execute_named(
   moveit::planning_interface::MoveGroupInterface& group,
   const std::string& name,
   bool execute,
+  double vel_scaling,
+  double acc_scaling,
   rclcpp::Logger logger)
 {
   group.setStartStateToCurrentState();
   group.clearPoseTargets();
+  const double prev_vel = group.getMaxVelocityScalingFactor();
+  const double prev_acc = group.getMaxAccelerationScalingFactor();
+  if (vel_scaling > 0.0) {
+    group.setMaxVelocityScalingFactor(std::min(1.0, std::max(0.01, vel_scaling)));
+  }
+  if (acc_scaling > 0.0) {
+    group.setMaxAccelerationScalingFactor(std::min(1.0, std::max(0.01, acc_scaling)));
+  }
   if (!group.setNamedTarget(name)) {
+    group.setMaxVelocityScalingFactor(prev_vel);
+    group.setMaxAccelerationScalingFactor(prev_acc);
     RCLCPP_ERROR(logger, "Failed to set named target '%s'.", name.c_str());
     return false;
   }
@@ -420,14 +432,20 @@ static bool plan_and_execute_named(
   moveit::planning_interface::MoveGroupInterface::Plan plan;
   const auto code = group.plan(plan);
   if (code != moveit::core::MoveItErrorCode::SUCCESS) {
+    group.setMaxVelocityScalingFactor(prev_vel);
+    group.setMaxAccelerationScalingFactor(prev_acc);
     RCLCPP_ERROR(logger, "Planning to named target '%s' failed (code=%d).", name.c_str(), code.val);
     return false;
   }
   if (!execute) {
+    group.setMaxVelocityScalingFactor(prev_vel);
+    group.setMaxAccelerationScalingFactor(prev_acc);
     RCLCPP_INFO(logger, "Named target '%s' plan OK (execute=false).", name.c_str());
     return true;
   }
   const auto exec_code = group.execute(plan);
+  group.setMaxVelocityScalingFactor(prev_vel);
+  group.setMaxAccelerationScalingFactor(prev_acc);
   if (exec_code != moveit::core::MoveItErrorCode::SUCCESS) {
     RCLCPP_ERROR(logger, "Execution to named target '%s' failed (code=%d).", name.c_str(), exec_code.val);
     return false;
@@ -551,7 +569,7 @@ int main(int argc, char** argv)
   declare_if_missing("pose_sample_count", 5);
   declare_if_missing("min_pose_sample_count", 3);
   declare_if_missing("max_pose_spread_m", 0.03);
-  declare_if_missing("post_rest_settle_s", 1.0);
+  declare_if_missing("post_rest_settle_s", 0.4);
   declare_if_missing("pose_transform_timeout_s", 0.1);
   declare_if_missing("pregrasp_offset_m", 0.08);
   declare_if_missing("hover_high_offset_m", 0.0);
@@ -559,6 +577,8 @@ int main(int argc, char** argv)
   declare_if_missing("pregrasp_y_offset_m", 0.0);
   declare_if_missing("pregrasp_z_extra_m", 0.0);
   declare_if_missing("use_two_stage_pregrasp", false);
+  declare_if_missing("continuous_approach_mode", true);
+  declare_if_missing("retreat_to_hover_high", true);
   declare_if_missing("grasp_x_offset_m", 0.0);
   declare_if_missing("grasp_y_offset_m", 0.0);
   declare_if_missing("grasp_z_offset_m", -0.015);
@@ -581,21 +601,23 @@ int main(int argc, char** argv)
   declare_if_missing("staging_named_pose", std::string{"rest"});
   declare_if_missing("return_to_named_pose_after_grasp", false);
   declare_if_missing("post_grasp_named_pose", std::string{"rest"});
+  declare_if_missing("post_grasp_return_vel_scaling", 0.12);
+  declare_if_missing("post_grasp_return_acc_scaling", 0.12);
   declare_if_missing("open_gripper_after_return", false);
-  declare_if_missing("post_return_gripper_settle_s", 0.4);
+  declare_if_missing("post_return_gripper_settle_s", 0.15);
   declare_if_missing("post_grasp_lift_before_return", false);
   declare_if_missing("post_grasp_return_lift_z_m", 0.14);
   declare_if_missing("post_grasp_return_lift_extra_m", 0.04);
   declare_if_missing("ik_post_grasp_lift_strategy", std::string{"cartesian"});
   declare_if_missing("ik_post_grasp_lift_duration_s", 1.2);
-  declare_if_missing("ik_post_grasp_lift_settle_s", 0.25);
+  declare_if_missing("ik_post_grasp_lift_settle_s", 0.05);
   declare_if_missing("post_grasp_return_via_rest_hover", false);
   declare_if_missing("post_grasp_rest_hover_x_m", 0.20);
   declare_if_missing("post_grasp_rest_hover_y_m", 0.0);
   declare_if_missing("post_grasp_rest_hover_z_m", 0.14);
   declare_if_missing("ik_post_grasp_rest_hover_strategy", std::string{"cartesian"});
   declare_if_missing("ik_post_grasp_rest_hover_duration_s", 1.4);
-  declare_if_missing("ik_post_grasp_rest_hover_settle_s", 0.25);
+  declare_if_missing("ik_post_grasp_rest_hover_settle_s", 0.05);
   declare_if_missing("post_grasp_use_ik_joints", false);
   declare_if_missing("ik_joints_service_name", std::string{"/go_to_joints"});
   declare_if_missing("ik_post_grasp_duration_s", 2.4);
@@ -617,13 +639,13 @@ int main(int argc, char** argv)
   declare_if_missing("ik_pregrasp_strategy", std::string{"joint_quintic"});
   declare_if_missing("ik_grasp_strategy", std::string{"cartesian"});
   declare_if_missing("ik_retreat_strategy", std::string{"cartesian"});
-  declare_if_missing("ik_pregrasp_duration_s", 1.8);
-  declare_if_missing("ik_grasp_duration_s", 1.2);
-  declare_if_missing("ik_retreat_duration_s", 1.2);
+  declare_if_missing("ik_pregrasp_duration_s", 1.7);
+  declare_if_missing("ik_grasp_duration_s", 1.1);
+  declare_if_missing("ik_retreat_duration_s", 1.1);
   declare_if_missing("ik_pose_service_timeout_s", 8.0);
-  declare_if_missing("ik_pregrasp_settle_s", 0.35);
-  declare_if_missing("ik_grasp_settle_s", 0.25);
-  declare_if_missing("ik_retreat_settle_s", 0.25);
+  declare_if_missing("ik_pregrasp_settle_s", 0.08);
+  declare_if_missing("ik_grasp_settle_s", 0.04);
+  declare_if_missing("ik_retreat_settle_s", 0.04);
   declare_if_missing("gripper_action_name", std::string{"/follower/gripper_controller/gripper_cmd"});
   declare_if_missing("gripper_open_pos", 1.5);
   declare_if_missing("gripper_closed_pos", -0.16);
@@ -656,6 +678,8 @@ int main(int argc, char** argv)
   const auto pregrasp_y_offset_m = node->get_parameter("pregrasp_y_offset_m").as_double();
   const auto pregrasp_z_extra_m = node->get_parameter("pregrasp_z_extra_m").as_double();
   const auto use_two_stage_pregrasp = node->get_parameter("use_two_stage_pregrasp").as_bool();
+  const auto continuous_approach_mode = node->get_parameter("continuous_approach_mode").as_bool();
+  const auto retreat_to_hover_high = node->get_parameter("retreat_to_hover_high").as_bool();
   const auto grasp_x_offset_m = node->get_parameter("grasp_x_offset_m").as_double();
   const auto grasp_y_offset_m = node->get_parameter("grasp_y_offset_m").as_double();
   const auto grasp_z_offset_m = node->get_parameter("grasp_z_offset_m").as_double();
@@ -678,6 +702,10 @@ int main(int argc, char** argv)
   const auto staging_named_pose = node->get_parameter("staging_named_pose").as_string();
   const auto return_to_named_pose_after_grasp = node->get_parameter("return_to_named_pose_after_grasp").as_bool();
   const auto post_grasp_named_pose = node->get_parameter("post_grasp_named_pose").as_string();
+  const auto post_grasp_return_vel_scaling =
+    node->get_parameter("post_grasp_return_vel_scaling").as_double();
+  const auto post_grasp_return_acc_scaling =
+    node->get_parameter("post_grasp_return_acc_scaling").as_double();
   const auto open_gripper_after_return = node->get_parameter("open_gripper_after_return").as_bool();
   const auto post_return_gripper_settle_s = node->get_parameter("post_return_gripper_settle_s").as_double();
   const auto post_grasp_lift_before_return = node->get_parameter("post_grasp_lift_before_return").as_bool();
@@ -833,6 +861,26 @@ int main(int argc, char** argv)
     arm.getEndEffectorLink().c_str());
   log_current_ee_pose(arm, node->get_logger(), "Current");
 
+  auto settle_for_stage = [&](const char* stage_name, double default_settle_s) {
+    if (!stage_name) {
+      return default_settle_s;
+    }
+    const std::string stage(stage_name);
+    if (stage == "hover_high") {
+      return std::min(default_settle_s, 0.03);
+    }
+    if (stage == "pregrasp") {
+      return std::min(default_settle_s, 0.05);
+    }
+    if (stage == "grasp") {
+      return default_settle_s;
+    }
+    if (stage == "retreat") {
+      return std::min(default_settle_s, 0.03);
+    }
+    return default_settle_s;
+  };
+
   auto move_to_pose_target =
     [&](const geometry_msgs::msg::PoseStamped& target,
         double service_duration_s,
@@ -844,6 +892,7 @@ int main(int argc, char** argv)
           service_strategy.empty() ? ik_pose_strategy : service_strategy;
         const double effective_duration_s =
           (effective_strategy == "cartesian") ? 0.0 : service_duration_s;
+        const double effective_settle_s = settle_for_stage(stage_name, settle_s);
         RCLCPP_INFO(
           node->get_logger(),
           "Moving to %s via IK pose service '%s' (strategy=%s, duration=%.2fs)...",
@@ -859,14 +908,14 @@ int main(int argc, char** argv)
           effective_duration_s,
           ik_pose_service_timeout_s);
         if (!ok) return false;
-        if (settle_s > 0.0) {
+        if (effective_settle_s > 0.0) {
           RCLCPP_INFO(
             node->get_logger(),
             "Waiting %.2fs for %s settle...",
-            settle_s,
+            effective_settle_s,
             stage_name);
           rclcpp::sleep_for(std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::duration<double>(settle_s)));
+            std::chrono::duration<double>(effective_settle_s)));
         }
         return true;
       }
@@ -1091,7 +1140,7 @@ int main(int argc, char** argv)
 
   if (enable_arm && go_to_rest_before_grasp) {
     RCLCPP_INFO(node->get_logger(), "Moving to staging pose '%s' first...", staging_named_pose.c_str());
-    if (!plan_and_execute_named(arm, staging_named_pose, execute, node->get_logger())) {
+    if (!plan_and_execute_named(arm, staging_named_pose, execute, vel_scaling, acc_scaling, node->get_logger())) {
       return fail(std::string("Failed to move to staging pose '") + staging_named_pose + "'.");
     }
     if (execute && post_rest_settle_s > 0.0) {
@@ -1210,12 +1259,19 @@ int main(int argc, char** argv)
 
       bool attempt_ok = true;
       if (enable_arm) {
+        const double hover_high_settle_s =
+          continuous_approach_mode ? 0.0 : ik_pregrasp_settle_s;
+        const double pregrasp_settle_s =
+          continuous_approach_mode ? 0.0 : ik_pregrasp_settle_s;
+        const double grasp_settle_s =
+          continuous_approach_mode ? std::min(ik_grasp_settle_s, 0.02) : ik_grasp_settle_s;
+
         if (use_two_stage_pregrasp && hover_high_offset_m > 1e-6) {
           if (!move_to_pose_target(
                 hover_high,
                 ik_pregrasp_duration_s,
                 ik_pregrasp_strategy,
-                ik_pregrasp_settle_s,
+                hover_high_settle_s,
                 "hover_high")) {
             last_grasp_attempt_error = "Failed to move to hover_high.";
             attempt_ok = false;
@@ -1228,7 +1284,7 @@ int main(int argc, char** argv)
                 pregrasp,
                 ik_pregrasp_duration_s,
                 ik_pregrasp_strategy,
-                ik_pregrasp_settle_s,
+                pregrasp_settle_s,
                 "pregrasp")) {
             last_grasp_attempt_error = "Failed to move to pregrasp.";
             attempt_ok = false;
@@ -1241,7 +1297,7 @@ int main(int argc, char** argv)
                 grasp,
                 ik_grasp_duration_s,
                 ik_grasp_strategy,
-                ik_grasp_settle_s,
+                grasp_settle_s,
                 "grasp")) {
             last_grasp_attempt_error = "Failed to move to grasp.";
             attempt_ok = false;
@@ -1288,21 +1344,28 @@ int main(int argc, char** argv)
   }
 
   if (enable_arm) {
+    const bool use_hover_high_retreat =
+      retreat_to_hover_high && use_two_stage_pregrasp && hover_high_offset_m > 1e-6;
+    const auto& retreat_target = use_hover_high_retreat ? hover_high : pregrasp;
+    const char* retreat_label = use_hover_high_retreat ? "retreat_hover_high" : "retreat";
+    const double retreat_settle_s =
+      return_to_named_pose_after_grasp ? 0.0 : ik_retreat_settle_s;
+
     RCLCPP_INFO(node->get_logger(), "Retreating...");
     if (!move_to_pose_target(
-          pregrasp,
+          retreat_target,
           ik_retreat_duration_s,
           ik_retreat_strategy,
-          ik_retreat_settle_s,
-          "retreat")) {
+          retreat_settle_s,
+          retreat_label)) {
       return fail("Failed to retreat.");
     }
-    log_current_ee_pose(arm, node->get_logger(), "After retreat", pregrasp);
+    log_current_ee_pose(arm, node->get_logger(), "After retreat", retreat_target);
     if (return_to_named_pose_after_grasp) {
       if (post_grasp_lift_before_return) {
-        auto return_lift = pregrasp;
+        auto return_lift = retreat_target;
         return_lift.pose.position.z = std::max(
-          pregrasp.pose.position.z + std::max(0.0, post_grasp_return_lift_extra_m),
+          retreat_target.pose.position.z + std::max(0.0, post_grasp_return_lift_extra_m),
           post_grasp_return_lift_z_m);
         if (enforce_table_z_limits) {
           return_lift.pose.position.z = std::max(
@@ -1329,7 +1392,7 @@ int main(int argc, char** argv)
       }
 
       if (post_grasp_return_via_rest_hover) {
-        auto rest_hover = pregrasp;
+        auto rest_hover = retreat_target;
         rest_hover.pose.position.x = post_grasp_rest_hover_x_m;
         rest_hover.pose.position.y = post_grasp_rest_hover_y_m;
         rest_hover.pose.position.z = post_grasp_rest_hover_z_m;
@@ -1400,7 +1463,13 @@ int main(int argc, char** argv)
 
         if (!returned_to_post_grasp_pose) {
           returned_to_post_grasp_pose =
-            plan_and_execute_named(arm, post_grasp_named_pose, execute, node->get_logger());
+            plan_and_execute_named(
+              arm,
+              post_grasp_named_pose,
+              execute,
+              post_grasp_return_vel_scaling,
+              post_grasp_return_acc_scaling,
+              node->get_logger());
         }
 
         if (returned_to_post_grasp_pose) {

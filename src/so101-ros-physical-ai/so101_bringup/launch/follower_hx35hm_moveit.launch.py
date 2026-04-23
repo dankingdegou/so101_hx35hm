@@ -67,6 +67,9 @@ def generate_launch_description():
                 "publish_joint_states_topic": "joint_states",
                 # Safety-first slow mode for manual GUI/joint commands.
                 "move_duration": 0.8,
+                # The Cartesian motion node streams /forward_controller commands at 50 Hz.
+                # Keep this short so /go_to_pose tracks targets instead of lagging.
+                "stream_command_duration": 0.05,
                 "enable_follow_joint_trajectory": True,
                 "enable_gripper_action": True,
                 "enable_position_readback": True,
