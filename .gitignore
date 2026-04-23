@@ -24,6 +24,7 @@ __pycache__/
 
 # IDE
 .vscode/
+src/.vscode/
 .idea/
 .codex/
 src/.codex/
@@ -34,6 +35,7 @@ Thumbs.db
 
 # Nested repo backup when flattening embedded git repos
 *.git.embedded-backup
+archive/
 
 # Environment / secrets
 .env

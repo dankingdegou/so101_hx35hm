@@ -45,19 +45,30 @@
 顶层关键内容：
 
 - [`src/`](/home/rog/ros2_ws/src)
-  ROS 2 源码、中文文档、桥接包
+  ROS 2 源码与各功能包
+- [`docs/`](/home/rog/ros2_ws/docs)
+  中文工程文档与调试记录
+- [`calibration/handeye/`](/home/rog/ros2_ws/calibration/handeye)
+  手眼标定结果与原始样本
+- [`tools/hardware_debug/`](/home/rog/ros2_ws/tools/hardware_debug)
+  裸硬件调试脚本
 - [`src/so101-ros-physical-ai/`](/home/rog/ros2_ws/src/so101-ros-physical-ai)
   主体 ROS 2 工程，包含 bringup、MoveIt、运动学、抓取、相机、工具
 - [`src/so101_hx35hm_bridge/`](/home/rog/ros2_ws/src/so101_hx35hm_bridge)
   HX-35HM 桥接、红球检测、ArUco 检测、桌面估计
-- [`aruco_handeye_result.json`](/home/rog/ros2_ws/aruco_handeye_result.json)
+- [`calibration/handeye/aruco_handeye_result.json`](/home/rog/ros2_ws/calibration/handeye/aruco_handeye_result.json)
   当前一套手眼标定结果
-- [`aruco_handeye_result_v2.json`](/home/rog/ros2_ws/aruco_handeye_result_v2.json)
+- [`calibration/handeye/aruco_handeye_result_v2.json`](/home/rog/ros2_ws/calibration/handeye/aruco_handeye_result_v2.json)
   另一套手眼标定结果
-- [`continuous_sweep.py`](/home/rog/ros2_ws/continuous_sweep.py)
+- [`tools/hardware_debug/continuous_sweep.py`](/home/rog/ros2_ws/tools/hardware_debug/continuous_sweep.py)
   舵机/机械臂扫动辅助脚本
-- [`return_to_home.py`](/home/rog/ros2_ws/return_to_home.py)
+- [`tools/hardware_debug/return_to_home.py`](/home/rog/ros2_ws/tools/hardware_debug/return_to_home.py)
   简单回位脚本
+
+归档目录：
+
+- `archive/`
+  不参与当前主工作区构建，只用于保存历史备份或非主工程内容
 
 主要 ROS 包：
 
@@ -181,13 +192,30 @@ ros2 topic list | rg '/vision|/static_camera|/joint_states'
 如果你第一次接这套系统，建议按下面顺序看文档：
 
 - 抓取流程：
-  [`HX35HM_SO101_红球抓取完整执行步骤.md`](/home/rog/ros2_ws/src/HX35HM_SO101_红球抓取完整执行步骤.md)
+  [`HX35HM_SO101_红球抓取完整执行步骤.md`](/home/rog/ros2_ws/docs/HX35HM_SO101_红球抓取完整执行步骤.md)
 - MoveIt 启动与规划控制：
-  [`HX35HM_SO101_MoveIt规划控制启动流程.md`](/home/rog/ros2_ws/src/HX35HM_SO101_MoveIt规划控制启动流程.md)
+  [`HX35HM_SO101_MoveIt规划控制启动流程.md`](/home/rog/ros2_ws/docs/HX35HM_SO101_MoveIt规划控制启动流程.md)
 - 相机内参标定：
-  [`HX35HM_SO101_相机内参标定完整步骤.md`](/home/rog/ros2_ws/src/HX35HM_SO101_相机内参标定完整步骤.md)
+  [`HX35HM_SO101_相机内参标定完整步骤.md`](/home/rog/ros2_ws/docs/HX35HM_SO101_相机内参标定完整步骤.md)
 - 装配姿态与归零建议：
-  [`HX35HM_SO101_装配姿态与归零建议.md`](/home/rog/ros2_ws/src/HX35HM_SO101_装配姿态与归零建议.md)
+  [`HX35HM_SO101_装配姿态与归零建议.md`](/home/rog/ros2_ws/docs/HX35HM_SO101_装配姿态与归零建议.md)
+
+中文工程文档导航：
+
+- 抓取调试日志：
+  [`HX35HM_SO101_红球抓取调试日志.md`](/home/rog/ros2_ws/docs/HX35HM_SO101_红球抓取调试日志.md)
+- 机械臂控制链详解：
+  [`HX35HM_SO101_机械臂控制链详解.md`](/home/rog/ros2_ws/docs/HX35HM_SO101_机械臂控制链详解.md)
+- 控制链接口速查表：
+  [`HX35HM_SO101_控制链接口速查表.md`](/home/rog/ros2_ws/docs/HX35HM_SO101_控制链接口速查表.md)
+- 手动调参指南：
+  [`HX35HM_SO101_手动调参指南.md`](/home/rog/ros2_ws/docs/HX35HM_SO101_手动调参指南.md)
+- 环境清理与进程管理：
+  [`HX35HM_SO101_环境清理与进程管理.md`](/home/rog/ros2_ws/docs/HX35HM_SO101_环境清理与进程管理.md)
+- 摄像头调位与可视化执行步骤：
+  [`HX35HM_SO101_摄像头调位与可视化执行步骤.md`](/home/rog/ros2_ws/docs/HX35HM_SO101_摄像头调位与可视化执行步骤.md)
+- 超详细装配流程：
+  [`HX35HM_SO101_超详细装配流程.md`](/home/rog/ros2_ws/docs/HX35HM_SO101_超详细装配流程.md)
 
 手眼标定相关工具在：
 
@@ -205,6 +233,7 @@ ros2 topic list | rg '/vision|/static_camera|/joint_states'
 - 相机标定文件优先使用 `package://` 路径，不再依赖本机固定 `file:///home/...`
 - hand-eye 工具默认输出已改成相对路径，更适合迁移到其他机器
 - `src/so101-ros-physical-ai` 现在已经作为普通源码目录纳入仓库，不再依赖外部子仓库指针
+- 中文工程文档已经统一整理到 `docs/`，避免和 ROS 包源码混放
 
 ## 常见注意事项
 
@@ -227,9 +256,14 @@ ros2 topic list | rg '/vision|/static_camera|/joint_states'
 所以仓库里除了运行必需的 ROS 包，也保留了：
 
 - 中文操作文档
-- 标定结果
+- 标定结果与标定原始样本（`calibration/handeye/`）
+- 裸硬件调试脚本（`tools/hardware_debug/`）
 - 部分相机配置
 - 机械臂描述与模型资源
+
+同时，已经明确归档、不参与当前主链路的内容会放到：
+
+- `archive/`
 
 如果你只是想找某个功能入口，最常用的路径通常是：
 
