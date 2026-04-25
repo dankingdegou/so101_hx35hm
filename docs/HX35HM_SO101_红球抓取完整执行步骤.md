@@ -665,7 +665,10 @@ ros2 launch so101_grasping so101_visual_grasp.launch.py \
   min_pregrasp_clearance_m:=0.080 \
   return_to_named_pose_after_grasp:=true \
   post_grasp_named_pose:=rest \
-  post_grasp_use_ik_joints:=false \
+  post_grasp_use_ik_joints:=true \
+  ik_post_grasp_duration_s:=1.2 \
+  post_grasp_return_vel_scaling:=0.24 \
+  post_grasp_return_acc_scaling:=0.24 \
   open_gripper_after_return:=true
 ```
 

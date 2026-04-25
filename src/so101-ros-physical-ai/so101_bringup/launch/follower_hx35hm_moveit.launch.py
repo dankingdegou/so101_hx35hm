@@ -114,9 +114,12 @@ def generate_launch_description():
                 # HX-35HM bus servos have measurable compliance/backlash. Keep the
                 # service-level check realistic, then let task nodes decide which
                 # stages need tighter semantic checks.
-                "goal_wait_timeout_s": 1.5,
+                "goal_wait_timeout_s": 0.35,
                 "goal_position_tolerance_m": 0.035,
                 "goal_orientation_tolerance_rad": 0.25,
+                # Keep the historical streamed /go_to_pose semantics: the IK node
+                # reports the residual but does not hard-fail the service call.
+                "fail_on_goal_tolerance": False,
             }
         ],
     )

@@ -17,11 +17,13 @@
 Three ways to drive the arm:
 
 - /go_to_pose service — plans a trajectory to a Cartesian pose (IK under
-  the hood) and streams it to the controller until the final point is hit.
+  the hood), then streams the precomputed joint targets at 50 Hz to
+  /follower/forward_controller/commands.
 - /go_to_joints service — plans a quintic trajectory directly in joint
-  space to the requested joint target (no IK).
+  space to the requested joint target (no IK) and executes it through
+  FollowJointTrajectory.
 - /servo_target topic — single-step IK toward the latest PoseStamped, when
-  no trajectory is active.
+  no service-driven trajectory is active.
 
 Trajectory mode wins absolutely over servo mode.
 
@@ -33,7 +35,7 @@ Subscribes:
     /follower/joint_states  (sensor_msgs/JointState)
     /servo_target           (geometry_msgs/PoseStamped) — interactive IK target
 
-Publishes (50 Hz while a trajectory or fresh servo target is active):
+Publishes (50 Hz while a fresh servo target is active):
     /follower/forward_controller/commands  (std_msgs/Float64MultiArray)
 
 Notes
@@ -59,22 +61,26 @@ from pathlib import Path
 
 import numpy as np
 import rclpy
+from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
+from builtin_interfaces.msg import Duration
+from control_msgs.action import FollowJointTrajectory
 from sensor_msgs.msg import JointState
 from std_msgs.msg import Float64MultiArray
 from geometry_msgs.msg import PoseStamped
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 
 from ament_index_python.packages import get_package_share_directory
 import xacro
 from scipy.spatial.transform import Rotation
 
 from robokin.placo import PlacoKinematics, PlacoConfig
-from robokin.trajectory_executor import TrajectoryExecutor
 from so101_kinematics.motion_planner import MotionPlanner
+from so101_kinematics.trajectory_executor import TrajectoryExecutor
 
 from so101_kinematics_msgs.srv import GoToPose, GoToJoints
 
@@ -100,16 +106,28 @@ class CartesianMotionNode(Node):
         # ── Parameters ──
         self.declare_parameter("joints_topic", "/follower/joint_states")
         self.declare_parameter("cmd_topic", "/follower/forward_controller/commands")
+        self.declare_parameter(
+            "fjt_action_name",
+            "/follower/arm_trajectory_controller/follow_joint_trajectory",
+        )
+        self.declare_parameter("fjt_server_wait_timeout_s", 2.0)
+        self.declare_parameter("fjt_result_timeout_padding_s", 5.0)
         self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("robot_description_package", "so101_description")
         self.declare_parameter("robot_description_xacro", "urdf/so101_arm.urdf.xacro")
         self.declare_parameter("robot_variant", "follower")
-        self.declare_parameter("goal_wait_timeout_s", 1.2)
+        self.declare_parameter("goal_wait_timeout_s", 0.35)
         self.declare_parameter("goal_position_tolerance_m", 0.02)
         self.declare_parameter("goal_orientation_tolerance_rad", 0.20)
         self.declare_parameter("fail_on_goal_tolerance", False)
 
         self._base_frame = str(self.get_parameter("base_frame").value)
+        self._fjt_server_wait_timeout_s = float(
+            self.get_parameter("fjt_server_wait_timeout_s").value
+        )
+        self._fjt_result_timeout_padding_s = float(
+            self.get_parameter("fjt_result_timeout_padding_s").value
+        )
         self._goal_wait_timeout_s = float(self.get_parameter("goal_wait_timeout_s").value)
         self._goal_position_tolerance_m = float(
             self.get_parameter("goal_position_tolerance_m").value
@@ -135,20 +153,15 @@ class CartesianMotionNode(Node):
         self.joint_names = self.solver.joint_names
         self.gripper_index = self.joint_names.index("gripper")
         self.planner = MotionPlanner(self.solver)
-        self.traj_executor = TrajectoryExecutor()
 
         # ── State ──
         self._q_measured: Optional[np.ndarray] = None
         self._q_held: Optional[np.ndarray] = None
         self._traj_lock = threading.Lock()  # serialize service calls
 
-        # Active-goal handoff between service handler (producer) and timer
-        # (consumer). The handler hands off the trajectory and waits on
-        # _goal_done; the timer drives the executor and signals _goal_done
-        # when the trajectory's final sample has been published.
+        # _goal_active blocks servo mode and overlapping service calls during
+        # service-driven trajectory execution.
         self._goal_active = False
-        self._goal_commands_gripper = False
-        self._goal_done = threading.Event()
 
         # Servo target: latest PoseStamped from /servo_target. Only consumed
         # when no trajectory is active. Cleared when a trajectory starts.
@@ -174,6 +187,12 @@ class CartesianMotionNode(Node):
             str(self.get_parameter("cmd_topic").value),
             10,
         )
+        self.fjt_client = ActionClient(
+            self,
+            FollowJointTrajectory,
+            str(self.get_parameter("fjt_action_name").value),
+            callback_group=cb_group,
+        )
         self.servo_sub = self.create_subscription(
             PoseStamped, "servo_target", self._on_servo_target, 1,
             callback_group=cb_group,
@@ -190,7 +209,8 @@ class CartesianMotionNode(Node):
 
         self.get_logger().info(
             f"cartesian_motion_node up — service /go_to_pose, "
-            f"cmd_topic={self.get_parameter('cmd_topic').value}"
+            f"cmd_topic={self.get_parameter('cmd_topic').value}, "
+            f"fjt_action={self.get_parameter('fjt_action_name').value}"
         )
 
     def _render_robot_urdf(
@@ -271,17 +291,7 @@ class CartesianMotionNode(Node):
         if self._q_held is None or self._q_measured is None:
             return
 
-        # Trajectory mode.
         if self._goal_active:
-            if not self.traj_executor.is_active():
-                return
-            q_cmd, reached_end = self.traj_executor.sample()
-            self._q_held = q_cmd.copy()
-            self._publish(q_cmd, include_gripper=self._goal_commands_gripper)
-            if reached_end:
-                self.traj_executor.cancel()
-                self._goal_active = False
-                self._goal_done.set()
             return
 
         # Servo mode — single-step IK toward latest /servo_target.
@@ -345,10 +355,13 @@ class CartesianMotionNode(Node):
             response.message = f"Planning failed: {e}"
             return response
 
-        self._goal_commands_gripper = False
         self._sync_held_gripper_from_measured()
         response = self._start_trajectory_and_wait(
-            ts, qs, response, label=f"go_to_pose strategy={strategy}"
+            ts,
+            qs,
+            self._trajectory_joint_names(include_gripper=False),
+            response,
+            label=f"go_to_pose strategy={strategy}",
         )
         if not response.success:
             return response
@@ -418,11 +431,15 @@ class CartesianMotionNode(Node):
             response.message = f"Planning failed: {e}"
             return response
 
-        self._goal_commands_gripper = "gripper" in requested
-        if not self._goal_commands_gripper:
+        include_gripper = "gripper" in requested
+        if not include_gripper:
             self._sync_held_gripper_from_measured()
         return self._start_trajectory_and_wait(
-            ts, qs, response, label=f"go_to_joints ({len(names)} joints)"
+            ts,
+            qs,
+            self._trajectory_joint_names(include_gripper=include_gripper),
+            response,
+            label=f"go_to_joints ({len(names)} joints)",
         )
 
     def _sync_held_gripper_from_measured(self):
@@ -430,33 +447,194 @@ class CartesianMotionNode(Node):
             return
         self._q_held[self.gripper_index] = self._q_measured[self.gripper_index]
 
-    def _start_trajectory_and_wait(self, ts, qs, response, label: str):
-        """Shared trajectory handoff: hand off to timer, wait for completion."""
+    def _trajectory_joint_names(self, include_gripper: bool) -> list[str]:
+        if include_gripper:
+            return list(self.joint_names)
+        return [name for name in self.joint_names if name != "gripper"]
+
+    def _select_trajectory_qs(
+        self, qs: np.ndarray, include_gripper: bool
+    ) -> np.ndarray:
+        if include_gripper:
+            return np.asarray(qs, dtype=float)
+        return np.delete(np.asarray(qs, dtype=float), self.gripper_index, axis=1)
+
+    def _compute_trajectory_velocities(
+        self, ts: np.ndarray, qs: np.ndarray
+    ) -> np.ndarray:
+        ts = np.asarray(ts, dtype=float)
+        qs = np.asarray(qs, dtype=float)
+        if len(ts) <= 1:
+            return np.zeros_like(qs)
+        return np.gradient(qs, ts, axis=0)
+
+    @staticmethod
+    def _to_duration_msg(sec: float) -> Duration:
+        sec = max(0.0, float(sec))
+        whole = int(sec)
+        nanosec = int(round((sec - whole) * 1e9))
+        if nanosec >= 1_000_000_000:
+            whole += 1
+            nanosec -= 1_000_000_000
+        return Duration(sec=whole, nanosec=nanosec)
+
+    def _build_joint_trajectory(
+        self,
+        ts: np.ndarray,
+        qs: np.ndarray,
+        joint_names: list[str],
+    ) -> JointTrajectory:
+        include_gripper = "gripper" in joint_names
+        qs_selected = self._select_trajectory_qs(qs, include_gripper=include_gripper)
+        velocities = self._compute_trajectory_velocities(ts, qs_selected)
+
+        traj = JointTrajectory()
+        traj.joint_names = list(joint_names)
+        for idx, t in enumerate(np.asarray(ts, dtype=float)):
+            point = JointTrajectoryPoint()
+            point.positions = [float(v) for v in qs_selected[idx]]
+            point.velocities = [float(v) for v in velocities[idx]]
+            point.time_from_start = self._to_duration_msg(float(t))
+            traj.points.append(point)
+        return traj
+
+    def _send_fjt_and_wait(
+        self,
+        trajectory: JointTrajectory,
+        total_duration_s: float,
+    ) -> tuple[bool, str]:
+        if not self.fjt_client.wait_for_server(timeout_sec=self._fjt_server_wait_timeout_s):
+            return False, "FollowJointTrajectory server not available"
+
+        goal = FollowJointTrajectory.Goal()
+        goal.trajectory = trajectory
+
+        goal_future = self.fjt_client.send_goal_async(goal)
+        send_deadline = time.time() + max(self._fjt_server_wait_timeout_s, 2.0)
+        while not goal_future.done() and time.time() < send_deadline:
+            time.sleep(0.01)
+        if not goal_future.done():
+            return False, "Timed out waiting for trajectory goal acceptance"
+
+        goal_handle = goal_future.result()
+        if goal_handle is None or not goal_handle.accepted:
+            return False, "FollowJointTrajectory goal rejected"
+
+        result_future = goal_handle.get_result_async()
+        result_deadline = time.time() + max(
+            2.0, float(total_duration_s) + self._fjt_result_timeout_padding_s
+        )
+        while not result_future.done() and time.time() < result_deadline:
+            time.sleep(0.01)
+        if not result_future.done():
+            try:
+                goal_handle.cancel_goal_async()
+            except Exception:
+                pass
+            return False, (
+                "Timed out waiting for FollowJointTrajectory result "
+                f"({max(2.0, float(total_duration_s) + self._fjt_result_timeout_padding_s):.2f}s)"
+            )
+
+        wrapped = result_future.result()
+        result = wrapped.result if wrapped is not None else None
+        if result is None:
+            return False, "FollowJointTrajectory returned no result"
+
+        error_code = int(getattr(result, "error_code", 0))
+        error_string = str(getattr(result, "error_string", ""))
+        if error_code != 0:
+            detail = f"error_code={error_code}"
+            if error_string:
+                detail += f" error_string={error_string}"
+            return False, f"FollowJointTrajectory failed: {detail}"
+
+        return True, "FollowJointTrajectory execution succeeded"
+
+    def _start_trajectory_and_wait(self, ts, qs, joint_names, response, label: str):
+        """Build a full JointTrajectory and execute it through FJT."""
+        trajectory = self._build_joint_trajectory(ts, qs, joint_names)
         # Drop any pending servo target so when the trajectory finishes the
         # arm holds at its final point instead of snapping back.
         self._servo_T = None
         self._servo_stamp_ns = None
-        self._goal_done.clear()
-        self.traj_executor.start(ts, qs)
+        self._goal_active = True
+        self.get_logger().info(
+            f"{label}: duration={ts[-1]:.2f}s steps={len(ts)} joints={joint_names}"
+        )
+        try:
+            success, message = self._send_fjt_and_wait(trajectory, float(ts[-1]))
+        finally:
+            self._goal_active = False
+
+        if not success:
+            response.success = False
+            response.message = message
+            return response
+
+        response.success = True
+        response.message = (
+            f"Trajectory complete via FJT ({ts[-1]:.2f}s, {len(ts)} steps)"
+        )
+        return response
+
+    def _start_streamed_trajectory_and_wait(
+        self,
+        ts,
+        qs,
+        include_gripper: bool,
+        response,
+        label: str,
+    ):
+        if self._q_held is None:
+            response.success = False
+            response.message = "No held joint state available for streamed execution"
+            return response
+
+        traj_executor = TrajectoryExecutor()
+        ts = np.asarray(ts, dtype=float)
+        qs_stream = np.asarray(qs, dtype=float).copy()
+        qs_stream[:, self.gripper_index] = self._q_held[self.gripper_index]
+
+        self._servo_T = None
+        self._servo_stamp_ns = None
         self._goal_active = True
         self.get_logger().info(
             f"{label}: duration={ts[-1]:.2f}s steps={len(ts)}"
         )
-
-        total_timeout = float(ts[-1]) + 2.0
-        finished = self._goal_done.wait(timeout=total_timeout)
-
-        if not finished:
-            self.traj_executor.cancel()
-            self._goal_active = False
-            response.success = False
-            response.message = (
-                f"Trajectory deadline exceeded ({total_timeout:.2f}s)"
+        try:
+            traj_executor.start(ts, qs_stream)
+            deadline = time.time() + max(
+                2.0, float(ts[-1]) + self._fjt_result_timeout_padding_s
             )
-            return response
+            reached_end = False
+            while time.time() < deadline:
+                q_cmd, reached_end = traj_executor.sample()
+                self._q_held = q_cmd.copy()
+                self._publish(q_cmd, include_gripper=include_gripper)
+                if reached_end:
+                    break
+                time.sleep(DT)
+
+            if not reached_end:
+                response.success = False
+                response.message = (
+                    "Timed out waiting for streamed trajectory to finish "
+                    f"({max(2.0, float(ts[-1]) + self._fjt_result_timeout_padding_s):.2f}s)"
+                )
+                return response
+
+            q_final = traj_executor.q_final
+            if q_final is not None:
+                self._q_held = q_final.copy()
+                self._publish(q_final, include_gripper=include_gripper)
+        finally:
+            self._goal_active = False
 
         response.success = True
-        response.message = f"Trajectory complete ({ts[-1]:.2f}s, {len(ts)} steps)"
+        response.message = (
+            f"Trajectory complete via streamed commands ({ts[-1]:.2f}s, {len(ts)} steps)"
+        )
         return response
 
     def _publish(self, q_cmd: np.ndarray, include_gripper: bool = True):

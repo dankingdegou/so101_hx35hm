@@ -601,8 +601,8 @@ int main(int argc, char** argv)
   declare_if_missing("staging_named_pose", std::string{"rest"});
   declare_if_missing("return_to_named_pose_after_grasp", false);
   declare_if_missing("post_grasp_named_pose", std::string{"rest"});
-  declare_if_missing("post_grasp_return_vel_scaling", 0.12);
-  declare_if_missing("post_grasp_return_acc_scaling", 0.12);
+  declare_if_missing("post_grasp_return_vel_scaling", 0.24);
+  declare_if_missing("post_grasp_return_acc_scaling", 0.24);
   declare_if_missing("open_gripper_after_return", false);
   declare_if_missing("post_return_gripper_settle_s", 0.15);
   declare_if_missing("post_grasp_lift_before_return", false);
@@ -618,9 +618,9 @@ int main(int argc, char** argv)
   declare_if_missing("ik_post_grasp_rest_hover_strategy", std::string{"cartesian"});
   declare_if_missing("ik_post_grasp_rest_hover_duration_s", 1.4);
   declare_if_missing("ik_post_grasp_rest_hover_settle_s", 0.05);
-  declare_if_missing("post_grasp_use_ik_joints", false);
+  declare_if_missing("post_grasp_use_ik_joints", true);
   declare_if_missing("ik_joints_service_name", std::string{"/go_to_joints"});
-  declare_if_missing("ik_post_grasp_duration_s", 2.4);
+  declare_if_missing("ik_post_grasp_duration_s", 1.2);
   declare_if_missing("use_marker_orientation", false);
   declare_if_missing("use_rpy", false);
   declare_if_missing("qx", 0.0);

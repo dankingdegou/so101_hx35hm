@@ -33,6 +33,11 @@ class MotionPlanner:
     def __init__(self, solver, dt: float | None = None):
         self.solver = solver
         self.dt = float(dt if dt is not None else solver.cfg.dt)
+        self._wrist_roll_index = (
+            self.solver.joint_names.index("wrist_roll")
+            if "wrist_roll" in self.solver.joint_names
+            else None
+        )
 
     def plan_pose_move(
         self,
@@ -102,9 +107,8 @@ class MotionPlanner:
             else getattr(cfg, "joint_min_duration", 0.6)
         )
 
-        q_goal = np.asarray(
-            self.solver.solve_goal(q_start, T_goal, n_iters=n_iters),
-            dtype=float,
+        q_goal = self._solve_goal_with_seed_search(
+            q_start, T_goal, n_iters=n_iters,
         )
 
         if duration is None:
@@ -113,6 +117,69 @@ class MotionPlanner:
             )
 
         return self._build_joint_quintic(q_start, q_goal, duration)
+
+    def _solve_goal_with_seed_search(
+        self,
+        q_start: np.ndarray,
+        T_goal: np.ndarray,
+        n_iters: int = 100,
+    ) -> np.ndarray:
+        """Try a few wrist-roll-biased IK seeds and keep the least extreme result.
+
+        The target end-effector pose stays exactly the same. We only vary the seed
+        given to the IK solver so it can land on a different valid branch when the
+        mechanism has that freedom. This is especially helpful for HX-35HM where
+        wrist_roll near its hard limits tends to produce ugly or unsafe motions.
+        """
+        q_start = np.asarray(q_start, dtype=float)
+
+        # Default single-seed behavior when the robot has no wrist_roll joint.
+        if self._wrist_roll_index is None:
+            return np.asarray(
+                self.solver.solve_goal(q_start, T_goal, n_iters=n_iters),
+                dtype=float,
+            )
+
+        wrist_idx = self._wrist_roll_index
+        seed_targets = [
+            float(q_start[wrist_idx]),
+            0.0,
+            -0.78539816339,
+            0.78539816339,
+            -1.57079632679,
+            1.57079632679,
+        ]
+
+        seen = set()
+        candidates: list[tuple[tuple[float, float], np.ndarray]] = []
+        for wrist_seed in seed_targets:
+            key = round(wrist_seed, 6)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            q_seed = q_start.copy()
+            q_seed[wrist_idx] = wrist_seed
+            q_goal = np.asarray(
+                self.solver.solve_goal(q_seed, T_goal, n_iters=n_iters),
+                dtype=float,
+            )
+            # Prefer solutions that keep wrist_roll away from its extremes.
+            # Secondary tie-breaker: stay close to the current arm state.
+            score = (
+                float(abs(q_goal[wrist_idx])),
+                float(np.linalg.norm(q_goal - q_start)),
+            )
+            candidates.append((score, q_goal))
+
+        if not candidates:
+            return np.asarray(
+                self.solver.solve_goal(q_start, T_goal, n_iters=n_iters),
+                dtype=float,
+            )
+
+        candidates.sort(key=lambda item: item[0])
+        return candidates[0][1]
 
     def plan_joint_move(
         self,
