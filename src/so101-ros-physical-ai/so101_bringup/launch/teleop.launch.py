@@ -21,6 +21,9 @@ def generate_launch_description():
 
     # --- Launch arguments ---
     hardware_type = LaunchConfiguration("hardware_type")  # real|mock|mujoco
+    # When using HX-35HM on the leader, we only need readback from the STM32
+    # board and must not let the original hardware driver open the serial port.
+    leader_hardware_type = LaunchConfiguration("leader_hardware_type")
     # When using HX-35HM on the follower, we still want controllers (forward_controller)
     # but we do NOT want the original hardware driver to touch a serial device.
     follower_hardware_type = LaunchConfiguration("follower_hardware_type")
@@ -37,6 +40,7 @@ def generate_launch_description():
 
     leader_ctrl_cfg = LaunchConfiguration("leader_controller_config_file")
     follower_ctrl_cfg = LaunchConfiguration("follower_controller_config_file")
+    leader_bridge_params_file = LaunchConfiguration("leader_bridge_params_file")
 
     leader_rviz = LaunchConfiguration("leader_rviz")
     follower_rviz = LaunchConfiguration("follower_rviz")
@@ -53,6 +57,7 @@ def generate_launch_description():
     use_teleop_rviz = LaunchConfiguration("use_teleop_rviz")
 
     # 使用 HX-35HM + STM32 控制板时的开关
+    use_leader_hx35hm = LaunchConfiguration("use_leader_hx35hm")
     use_hx35hm = LaunchConfiguration("use_hx35hm")
 
     use_rerun = LaunchConfiguration("use_rerun")
@@ -66,12 +71,15 @@ def generate_launch_description():
         ),
         launch_arguments={
             "namespace": leader_ns,
-            "hardware_type": hardware_type,
+            "hardware_type": leader_hardware_type,
             "usb_port": leader_usb,
             "frame_prefix": leader_frame_prefix,
             "joint_config_file": leader_joint_cfg,
             "controller_config_file": leader_ctrl_cfg,
             "use_rviz": leader_rviz,
+            "spawn_joint_state_broadcaster": PythonExpression(
+                ["'false' if '", use_leader_hx35hm, "' == 'true' else 'true'"]
+            ),
         }.items(),
     )
 
@@ -199,6 +207,9 @@ def generate_launch_description():
             "follower_controllers.yaml",
         ]
     )
+    default_leader_bridge_params = PathJoinSubstitution(
+        [FindPackageShare("so101_bringup"), "config", "hx35hm_leader_bridge_params.yaml"]
+    )
     default_teleop_params = PathJoinSubstitution([FindPackageShare("so101_teleop"), "config", "teleop.yaml"])
     default_cameras_cfg = PathJoinSubstitution(
         [FindPackageShare("so101_bringup"), "config", "cameras", "so101_cameras.yaml"]
@@ -207,6 +218,19 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("hardware_type", default_value="real"),
+            DeclareLaunchArgument(
+                "leader_hardware_type",
+                default_value=PythonExpression(
+                    [
+                        "'mock' if '",
+                        use_leader_hx35hm,
+                        "' == 'true' else '",
+                        hardware_type,
+                        "'",
+                    ]
+                ),
+                description="Leader hardware type. Defaults to 'mock' when use_leader_hx35hm:=true, else mirrors hardware_type.",
+            ),
             DeclareLaunchArgument(
                 "follower_hardware_type",
                 # Safe default: when use_hx35hm is true, force follower to mock so we don't
@@ -231,6 +255,7 @@ def generate_launch_description():
             DeclareLaunchArgument("leader_joint_config_file", default_value=default_leader_joint_cfg),
             DeclareLaunchArgument("follower_joint_config_file", default_value=default_follower_joint_cfg),
             DeclareLaunchArgument("leader_controller_config_file", default_value=default_leader_ctrl_cfg),
+            DeclareLaunchArgument("leader_bridge_params_file", default_value=default_leader_bridge_params),
             DeclareLaunchArgument(
                 "follower_controller_config_file",
                 default_value=default_follower_ctrl_cfg,
@@ -244,6 +269,11 @@ def generate_launch_description():
             DeclareLaunchArgument("cameras_config_file", default_value=default_cameras_cfg),
             DeclareLaunchArgument("use_camera_tf", default_value="true"),
             DeclareLaunchArgument("use_teleop_rviz", default_value="true"),
+            DeclareLaunchArgument(
+                "use_leader_hx35hm",
+                default_value="false",
+                description="Whether to use HX-35HM bridge + ros_robot_controller for leader arm.",
+            ),
             DeclareLaunchArgument(
                 "use_hx35hm",
                 default_value="false",
@@ -265,23 +295,46 @@ def generate_launch_description():
             rviz_node,
             rerun_start,
             teleop_start,
+            Node(
+                package="so101_hx35hm_bridge",
+                executable="hx35hm_bridge",
+                namespace=leader_ns,
+                name="hx35hm_bridge",
+                output="screen",
+                parameters=[
+                    leader_bridge_params_file,
+                    {
+                        "device": leader_usb,
+                        "command_topic": "forward_controller/commands",
+                        "publish_joint_states_topic": "joint_states",
+                        "enable_follow_joint_trajectory": False,
+                        "enable_gripper_action": False,
+                        "enable_position_readback": True,
+                        # Leader is manually backdriven in teleop, so readback is
+                        # the only thing we really need from the bridge.
+                        "move_duration": 0.8,
+                        "stream_command_duration": 0.05,
+                    }
+                ],
+                condition=IfCondition(use_leader_hx35hm),
+            ),
             # HX-35HM bus servo bridge (directly uses Board SDK; do not
             # launch ros_robot_controller here to avoid double-opening serial).
             Node(
                 package="so101_hx35hm_bridge",
                 executable="hx35hm_bridge",
+                namespace=follower_ns,
                 name="hx35hm_bridge",
                 output="screen",
                 parameters=[
                     {
-                        "device": "/dev/ros_robot_controller",
-                        "command_topic": "/follower/forward_controller/commands",
-                        # Publish to the follower namespace so MoveIt/recording/inference
-                        # (which default to /follower/joint_states) see the hardware state.
-                        "publish_joint_states_topic": "/follower/joint_states",
+                        "device": follower_usb,
+                        "command_topic": "forward_controller/commands",
+                        "publish_joint_states_topic": "joint_states",
                         # Teleop doesn't use MoveIt, so keep the action server off here to avoid
-                        # having it appear under the root namespace.
+                        # having it appear in the teleop graph.
                         "enable_follow_joint_trajectory": False,
+                        "enable_gripper_action": False,
                     }
                 ],
                 condition=IfCondition(use_hx35hm),

@@ -1,0 +1,14 @@
+# SO-101 local udev rules
+# Updated on 2026-04-29 for the HX35HM STM32 arm controller pair.
+#
+# Known boards:
+#   leader   -> ID_SERIAL_SHORT=596F003063
+#   follower -> ATTRS{serial}=596F003872
+#
+# Install with:
+#   sudo cp /home/rog/ros2_ws/config/99-so101.rules /etc/udev/rules.d/99-so101.rules
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger
+
+SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="1a86", ENV{ID_MODEL_ID}=="55d4", ENV{ID_SERIAL_SHORT}=="596F003063", SYMLINK+="so101_leader", GROUP="dialout", MODE="0660"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", ATTRS{serial}=="596F003872", SYMLINK+="so101_follower", GROUP="dialout", MODE="0660"

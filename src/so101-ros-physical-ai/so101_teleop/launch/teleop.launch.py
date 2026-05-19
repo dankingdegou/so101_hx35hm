@@ -21,6 +21,7 @@ def generate_launch_description():
 
     # Derived topics from namespaces
     leader_topic = PythonExpression(["'/' + '", leader_ns, "' + '/joint_states'"])
+    follower_topic = PythonExpression(["'/' + '", follower_ns, "' + '/joint_states'"])
     jtc_topic = PythonExpression(
         ["'/' + '", follower_ns, "' + '/trajectory_controller/joint_trajectory'"]
     )
@@ -55,6 +56,7 @@ def generate_launch_description():
                     {
                         "arm_mode": arm_mode,
                         "leader_topic": leader_topic,
+                        "follower_topic": follower_topic,
                         "jtc_topic": jtc_topic,
                         "fwd_topic": fwd_topic,
                     },

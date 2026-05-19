@@ -1,0 +1,40 @@
+leader:
+  hx35hm_bridge:
+    ros__parameters:
+      device: /dev/so101_leader
+      command_topic: forward_controller/commands
+      enable_command_subscription: false
+      publish_joint_states_topic: joint_states
+      state_publish_rate_hz: 100.0
+      enable_follow_joint_trajectory: false
+      enable_gripper_action: false
+      enable_position_readback: true
+      position_readback_rate_hz: 180.0
+      clamp_readback_to_joint_limits: false
+      disable_torque_on_startup: true
+      restore_torque_on_shutdown: false
+      maintain_torque_disabled: false
+      torque_disable_keepalive_rate_hz: 0.0
+      torque_servo_ids:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      move_duration: 0.8
+      stream_command_duration: 0.05
+      joint_directions:
+      - 1
+      - -1
+      - 1
+      - -1
+      - 1
+      - 1
+      joint_zero_positions:
+      - 499.0
+      - 144.19
+      - 480.19
+      - 585.05
+      - 492.0
+      - 500.0

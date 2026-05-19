@@ -238,7 +238,7 @@ def parse_args() -> argparse.Namespace:
         description="SO101 assembly helper for HX-35HM (single servo or SRDF pose)."
     )
 
-    mode = parser.add_mutually_exclusive_group(required=True)
+    mode = parser.add_mutually_exclusive_group(required=False)
     mode.add_argument("--pose", help="Named pose from SRDF (e.g. rest, zero, extended).")
     mode.add_argument("--servo-id", type=int, help="Single servo id to command.")
 
@@ -449,6 +449,9 @@ def main() -> int:
             joints_in_pose = ", ".join(sorted(poses[name].keys()))
             print(f"- {name}: {joints_in_pose}")
         return 0
+
+    if args.pose is None and args.servo_id is None:
+        raise SystemExit("one of the arguments --pose --servo-id is required")
 
     if args.servo_id is not None:
         if args.pos is None:

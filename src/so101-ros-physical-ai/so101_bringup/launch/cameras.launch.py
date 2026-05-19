@@ -3,7 +3,8 @@ import os
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -23,18 +24,20 @@ def _spawn_cameras(context):
         name = cam["name"]
         ns = cam.get("namespace", "")
         cam_type = cam["camera_type"]
-        param_path = cam["param_path"]
-
-        if os.path.isabs(param_path):
-            param_file = param_path
-        else:
-            # Prefer resolving relative param files next to the selected cameras_config.
-            # This makes it easy to test/edit configs in-source without requiring reinstall.
-            candidate = os.path.join(cfg_dir, param_path)
-            if os.path.exists(candidate):
-                param_file = candidate
+        inline_parameters = cam.get("parameters", {})
+        param_path = cam.get("param_path")
+        param_file = None
+        if param_path:
+            if os.path.isabs(param_path):
+                param_file = param_path
             else:
-                param_file = os.path.join(pkg_share, "config", "cameras", param_path)
+                # Prefer resolving relative param files next to the selected cameras_config.
+                # This makes it easy to test/edit configs in-source without requiring reinstall.
+                candidate = os.path.join(cfg_dir, param_path)
+                if os.path.exists(candidate):
+                    param_file = candidate
+                else:
+                    param_file = os.path.join(pkg_share, "config", "cameras", param_path)
 
         if cam_type == "v4l2_camera":
             nodes.append(
@@ -126,6 +129,36 @@ def _spawn_cameras(context):
                     name=name,
                     namespace=ns,
                     parameters=[param_file, {"use_sim_time": False}],
+                    output="screen",
+                )
+            )
+        elif cam_type == "orbbec_camera_launch":
+            launch_package = cam.get("launch_package", "orbbec_camera")
+            launch_file = cam["launch_file"]
+            launch_path = os.path.join(get_package_share_directory(launch_package), "launch", launch_file)
+            launch_args = {
+                str(k): str(v)
+                for k, v in (cam.get("launch_arguments", {}) or {}).items()
+            }
+            nodes.append(
+                IncludeLaunchDescription(
+                    PythonLaunchDescriptionSource(launch_path),
+                    launch_arguments=launch_args.items(),
+                )
+            )
+        elif cam_type == "so101_camera_topic_compat":
+            parameters = [{"use_sim_time": False}]
+            if param_file:
+                parameters.insert(0, param_file)
+            if inline_parameters:
+                parameters.append(inline_parameters)
+            nodes.append(
+                Node(
+                    package="so101_hx35hm_bridge",
+                    executable="camera_topic_compat",
+                    name=name,
+                    namespace=ns,
+                    parameters=parameters,
                     output="screen",
                 )
             )

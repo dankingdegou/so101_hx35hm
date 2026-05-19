@@ -16,6 +16,7 @@ def generate_launch_description():
     joint_config_file = LaunchConfiguration("joint_config_file")
     hardware_type = LaunchConfiguration("hardware_type")
     controllers = LaunchConfiguration("controller_config_file")
+    spawn_joint_state_broadcaster = LaunchConfiguration("spawn_joint_state_broadcaster")
     use_rviz = LaunchConfiguration("use_rviz")
     rviz_config = LaunchConfiguration("rviz_config")
 
@@ -70,6 +71,7 @@ def generate_launch_description():
         namespace=namespace,
         arguments=["joint_state_broadcaster"],
         output="screen",
+        condition=IfCondition(spawn_joint_state_broadcaster),
     )
 
     rviz_node = Node(
@@ -105,6 +107,11 @@ def generate_launch_description():
                         "leader_controllers.yaml",
                     ]
                 ),
+            ),
+            DeclareLaunchArgument(
+                "spawn_joint_state_broadcaster",
+                default_value="true",
+                description="Whether to spawn joint_state_broadcaster (disable if an external node publishes /<ns>/joint_states).",
             ),
             DeclareLaunchArgument("use_rviz", default_value="true"),
             DeclareLaunchArgument(

@@ -350,11 +350,120 @@ class Board:
 
     def bus_servo_enable_torque(self, servo_id, enable):
         if enable:
-            data = struct.pack("<BB", 0x0B, servo_id)
-        else:
             data = struct.pack("<BB", 0x0C, servo_id)
+        else:
+            data = struct.pack("<BB", 0x0B, servo_id)
         self.buf_write(PacketFunction.PACKET_FUNC_BUS_SERVO, data)
         time.sleep(0.02)
+
+    def bus_servo_raw_write(self, raw_frame):
+        """Send a raw 0x55 0x55 bus-servo frame through compatible STM32 firmware.
+
+        This requires custom STM32 firmware support for bus-servo subcommand 0xF0.
+        Stock ros_robot_controller firmware is not known to support this command.
+        """
+        raw = bytes(raw_frame)
+        if len(raw) > 240:
+            raise ValueError("raw bus-servo frame is too large")
+        data = struct.pack("<BB", 0xF0, len(raw))
+        data += raw
+        self.buf_write(PacketFunction.PACKET_FUNC_BUS_SERVO, data)
+        time.sleep(0.02)
+
+    def bus_servo_raw_transaction(self, raw_frame, timeout=None):
+        """Send a raw frame and return bytes from custom STM32 passthrough firmware.
+
+        Expected STM32 response payload for subcommand 0xF1:
+            [0xF1, status, raw_len, raw_bytes...]
+        """
+        raw = bytes(raw_frame)
+        if len(raw) > 240:
+            raise ValueError("raw bus-servo frame is too large")
+        with self.servo_read_lock:
+            try:
+                while True:
+                    self.bus_servo_queue.get_nowait()
+            except queue.Empty:
+                pass
+
+            data = struct.pack("<BB", 0xF1, len(raw)) + raw
+            self.buf_write(PacketFunction.PACKET_FUNC_BUS_SERVO, data)
+            end_time = None if timeout is None else (time.time() + float(timeout))
+            while True:
+                try:
+                    if end_time is None:
+                        resp = self.bus_servo_queue.get(block=True)
+                    else:
+                        remaining = end_time - time.time()
+                        if remaining <= 0.0:
+                            return None
+                        resp = self.bus_servo_queue.get(block=True, timeout=remaining)
+                except queue.Empty:
+                    return None
+
+                if len(resp) < 3 or resp[0] != 0xF1:
+                    continue
+                status = int(resp[1])
+                raw_len = int(resp[2])
+                if status != 0:
+                    return None
+                return bytes(resp[3 : 3 + raw_len])
+
+    @staticmethod
+    def bus_servo_make_raw_packet(servo_id, cmd, params=None):
+        """Build a Hiwonder/LewanSoul 0x55 0x55 raw servo packet."""
+        params = [] if params is None else [int(p) & 0xFF for p in params]
+        body = [int(servo_id) & 0xFF, len(params) + 3, int(cmd) & 0xFF]
+        body.extend(params)
+        checksum = (~sum(body)) & 0xFF
+        return bytes([0x55, 0x55, *body, checksum])
+
+    def bus_servo_load_or_unload_raw(self, servo_id, enable):
+        """Use custom raw passthrough firmware to send SERVO_LOAD_OR_UNLOAD_WRITE=31."""
+        raw = self.bus_servo_make_raw_packet(int(servo_id), 31, [1 if enable else 0])
+        self.bus_servo_raw_write(raw)
+
+    def bus_servo_unload_many(self, servo_ids):
+        """Dedicated custom firmware command for HX/Hiwonder unload on multiple IDs.
+
+        This requires custom STM32 firmware support for bus-servo subcommand 0xF2.
+        Payload layout:
+            [0xF2, id_count, servo_id_1, servo_id_2, ...]
+        """
+        ids = [int(servo_id) & 0xFF for servo_id in servo_ids]
+        if not ids:
+            return
+        if len(ids) > 240:
+            raise ValueError("too many servo IDs")
+        data = struct.pack("<BB", 0xF2, len(ids))
+        data += bytes(ids)
+        self.buf_write(PacketFunction.PACKET_FUNC_BUS_SERVO, data)
+        time.sleep(0.02)
+
+    def bus_servo_load_many(self, servo_ids):
+        """Dedicated custom firmware command for HX/Hiwonder load on multiple IDs.
+
+        This requires custom STM32 firmware support for bus-servo subcommand 0xF3.
+        Payload layout:
+            [0xF3, id_count, servo_id_1, servo_id_2, ...]
+        """
+        ids = [int(servo_id) & 0xFF for servo_id in servo_ids]
+        if not ids:
+            return
+        if len(ids) > 240:
+            raise ValueError("too many servo IDs")
+        data = struct.pack("<BB", 0xF3, len(ids))
+        data += bytes(ids)
+        self.buf_write(PacketFunction.PACKET_FUNC_BUS_SERVO, data)
+        time.sleep(0.02)
+
+    def bus_servo_unload(self, servo_id):
+        """Dedicated custom firmware command for HX/Hiwonder LOAD_OR_UNLOAD_WRITE=31, param=0."""
+        self.bus_servo_unload_many([servo_id])
+
+    def bus_servo_load(self, servo_id):
+        """Dedicated custom firmware command for HX/Hiwonder LOAD_OR_UNLOAD_WRITE=31, param=1."""
+        self.bus_servo_load_many([servo_id])
 
     def bus_servo_set_id(self, servo_id_now, servo_id_new):
         data = struct.pack("<BBB", 0x10, servo_id_now, servo_id_new)

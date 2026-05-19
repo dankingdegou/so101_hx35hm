@@ -1,0 +1,31 @@
+follower:
+  hx35hm_bridge:
+    ros__parameters:
+      device: /dev/so101_follower
+      command_topic: forward_controller/commands
+      publish_joint_states_topic: joint_states
+      enable_follow_joint_trajectory: false
+      enable_gripper_action: false
+      enable_position_readback: true
+      position_readback_rate_hz: 5.0
+      move_duration: 0.2
+      stream_command_duration: 0.03
+      stream_command_async_write: true
+      stream_write_rate_hz: 75.0
+      stream_target_smoothing: true
+      stream_max_velocity_rad_s: 2.5
+      suspend_readback_after_stream_command_s: 0.0
+      joint_directions:
+      - 1
+      - -1
+      - 1
+      - -1
+      - 1
+      - 1
+      joint_zero_positions:
+      - 498.0
+      - 499.19
+      - -249.81
+      - 497.05
+      - 500.0
+      - 500.0

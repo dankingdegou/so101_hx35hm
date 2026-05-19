@@ -13,7 +13,7 @@ def generate_launch_description() -> LaunchDescription:
         [
             DeclareLaunchArgument(
                 "device",
-                default_value="/dev/ros_robot_controller",
+                default_value="/dev/so101_follower",
                 description="Serial device for STM32 bus-servo controller.",
             ),
             DeclareLaunchArgument(
@@ -41,4 +41,3 @@ def generate_launch_description() -> LaunchDescription:
             ),
         ]
     )
-

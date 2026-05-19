@@ -1,12 +1,31 @@
 cameras:
-  # Higher-resolution RGB (UVC) for overhead view
-  - name: cam_overhead
-    camera_type: gscam
-    param_path: so101_gs_cam_astra_overhead_720.yaml
+  - name: overhead_rgbd
+    camera_type: orbbec_camera_launch
+    launch_package: orbbec_camera
+    launch_file: astra_pro_plus.launch.py
     namespace: static_camera
-
-  # Depth / Pointcloud via OpenNI2 for the same physical camera
-  - name: depth_overhead
-    camera_type: so101_openni2_camera
-    param_path: so101_openni2.yaml
+    launch_arguments:
+      camera_name: static_camera
+      product_id: "0x060f"
+      enable_color: "true"
+      enable_ir: "false"
+      enable_point_cloud: "false"
+      enable_colored_point_cloud: "false"
+      publish_tf: "false"
+      color_info_url: "package://so101_bringup/config/cameras/static_camera_color_calib_placeholder_720.yaml"
+      color_width: "1280"
+      color_height: "720"
+      color_fps: "30"
+      color_format: "RGB"
+      depth_width: "640"
+      depth_height: "480"
+      depth_fps: "30"
+      depth_format: "Y11"
+  - name: overhead_rgb_compat
+    camera_type: so101_camera_topic_compat
     namespace: static_camera
+    parameters:
+      input_image_topic: "/static_camera/color/image_raw"
+      input_camera_info_topic: "/static_camera/color/camera_info"
+      output_image_topic: "/static_camera/image_raw"
+      output_camera_info_topic: "/static_camera/camera_info"

@@ -10,6 +10,7 @@ setup(
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
         ("share/" + package_name + "/launch", ["launch/so101_hx35hm_bridge.launch.py"]),
+        ("share/" + package_name + "/config", ["config/assembly_calibration.yaml", "config/leader_assembly_calibration.yaml"]),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -22,6 +23,7 @@ setup(
         "console_scripts": [
             "hx35hm_bridge = so101_hx35hm_bridge.bridge_node:main",
             "aruco_detector = so101_hx35hm_bridge.aruco_detector_node:main",
+            "camera_topic_compat = so101_hx35hm_bridge.camera_topic_compat_node:main",
             "red_circle_detector = so101_hx35hm_bridge.red_circle_detector_node:main",
             "table_plane_estimator = so101_hx35hm_bridge.table_plane_estimator_node:main",
         ],

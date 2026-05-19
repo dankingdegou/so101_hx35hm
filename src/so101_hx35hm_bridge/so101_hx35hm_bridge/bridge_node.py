@@ -13,6 +13,7 @@ import rclpy
 from rclpy.action import ActionServer
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 
 from builtin_interfaces.msg import Time
 from control_msgs.action import FollowJointTrajectory
@@ -66,8 +67,24 @@ class Hx35hmBridgeNode(Node):
         self.declare_parameter("device", "/dev/ros_robot_controller")
         self.declare_parameter("joint_names", list(JOINT_ID_MAP.keys()))
         self.declare_parameter("command_topic", "/follower/forward_controller/commands")
+        self.declare_parameter("enable_command_subscription", True)
         self.declare_parameter("move_duration", 0.2)
         self.declare_parameter("stream_command_duration", 0.04)
+        self.declare_parameter("stream_command_async_write", False)
+        self.declare_parameter("stream_write_rate_hz", 75.0)
+        self.declare_parameter("stream_target_smoothing", False)
+        self.declare_parameter("stream_max_velocity_rad_s", 3.0)
+        self.declare_parameter("command_position_deadband_rad", 0.002)
+        self.declare_parameter("gripper_command_deadband_rad", 0.01)
+        self.declare_parameter("suspend_readback_after_stream_command_s", 0.0)
+        self.declare_parameter("log_gripper_mapping", False)
+        self.declare_parameter("disable_torque_on_startup", False)
+        self.declare_parameter("restore_torque_on_shutdown", False)
+        self.declare_parameter("torque_servo_ids", [1, 2, 3, 4, 5, 6])
+        self.declare_parameter("torque_command_retries", 3)
+        self.declare_parameter("torque_command_interval_s", 0.05)
+        self.declare_parameter("maintain_torque_disabled", False)
+        self.declare_parameter("torque_disable_keepalive_rate_hz", 2.0)
         self.declare_parameter("publish_joint_states_topic", "/joint_states")
         self.declare_parameter("state_publish_rate_hz", 50.0)
         self.declare_parameter("trajectory_command_rate_hz", 50.0)
@@ -89,6 +106,9 @@ class Hx35hmBridgeNode(Node):
         # - "round_robin": 每次只读 1 个舵机（默认，避免单次回调阻塞太久）
         # - "all": 每次读完所有关节（更实时，但在异常时可能阻塞更久）
         self.declare_parameter("position_readback_mode", "round_robin")
+        # Leader teleop may need raw encoder-derived angles beyond follower/MoveIt limits.
+        # Keep enabled for follower state publishing; disable for read-only leader arms.
+        self.declare_parameter("clamp_readback_to_joint_limits", True)
         # 单次回读等待超时（秒）。用于避免串口异常时阻塞回调线程。
         self.declare_parameter("position_readback_timeout_s", 0.05)
         # HX-35HM 位置映射参数（默认: 0 rad -> pos=500, 240deg span -> 0..1000）
@@ -106,6 +126,9 @@ class Hx35hmBridgeNode(Node):
 
         device = self.get_parameter("device").get_parameter_value().string_value
         cmd_topic = self.get_parameter("command_topic").get_parameter_value().string_value
+        enable_command_subscription = bool(
+            self.get_parameter("enable_command_subscription").get_parameter_value().bool_value
+        )
         joint_names_param = (
             self.get_parameter("joint_names").get_parameter_value().string_array_value
         )
@@ -119,6 +142,55 @@ class Hx35hmBridgeNode(Node):
         )
         self.stream_command_duration = float(
             self.get_parameter("stream_command_duration").get_parameter_value().double_value
+        )
+        self.stream_command_async_write = bool(
+            self.get_parameter("stream_command_async_write").get_parameter_value().bool_value
+        )
+        self.stream_write_rate_hz = float(
+            self.get_parameter("stream_write_rate_hz").get_parameter_value().double_value
+        )
+        self.stream_target_smoothing = bool(
+            self.get_parameter("stream_target_smoothing").get_parameter_value().bool_value
+        )
+        self.stream_max_velocity_rad_s = float(
+            self.get_parameter("stream_max_velocity_rad_s").get_parameter_value().double_value
+        )
+        self.command_position_deadband_rad = float(
+            self.get_parameter("command_position_deadband_rad").get_parameter_value().double_value
+        )
+        self.gripper_command_deadband_rad = float(
+            self.get_parameter("gripper_command_deadband_rad").get_parameter_value().double_value
+        )
+        self.suspend_readback_after_stream_command_s = float(
+            self.get_parameter("suspend_readback_after_stream_command_s")
+            .get_parameter_value()
+            .double_value
+        )
+        self.log_gripper_mapping = bool(
+            self.get_parameter("log_gripper_mapping").get_parameter_value().bool_value
+        )
+        self.disable_torque_on_startup = bool(
+            self.get_parameter("disable_torque_on_startup").get_parameter_value().bool_value
+        )
+        self.restore_torque_on_shutdown = bool(
+            self.get_parameter("restore_torque_on_shutdown").get_parameter_value().bool_value
+        )
+        torque_servo_ids_param = (
+            self.get_parameter("torque_servo_ids").get_parameter_value().integer_array_value
+        )
+        self.torque_command_retries = max(
+            1, int(self.get_parameter("torque_command_retries").get_parameter_value().integer_value)
+        )
+        self.torque_command_interval_s = float(
+            self.get_parameter("torque_command_interval_s").get_parameter_value().double_value
+        )
+        self.maintain_torque_disabled = bool(
+            self.get_parameter("maintain_torque_disabled").get_parameter_value().bool_value
+        )
+        self.torque_disable_keepalive_rate_hz = float(
+            self.get_parameter("torque_disable_keepalive_rate_hz")
+            .get_parameter_value()
+            .double_value
         )
         state_topic = (
             self.get_parameter("publish_joint_states_topic")
@@ -158,6 +230,9 @@ class Hx35hmBridgeNode(Node):
         )
         enable_readback = (
             self.get_parameter("enable_position_readback").get_parameter_value().bool_value
+        )
+        self.clamp_readback_to_joint_limits = bool(
+            self.get_parameter("clamp_readback_to_joint_limits").get_parameter_value().bool_value
         )
         readback_rate = (
             self.get_parameter("position_readback_rate_hz").get_parameter_value().double_value
@@ -208,6 +283,11 @@ class Hx35hmBridgeNode(Node):
             name: float(zero_positions_param[i]) if zero_positions_param else self.servo_zero_pos
             for i, name in enumerate(self.joint_names)
         }
+        self.torque_servo_ids: List[int] = (
+            [int(i) for i in torque_servo_ids_param]
+            if torque_servo_ids_param
+            else [JOINT_ID_MAP[name] for name in self.joint_names if name in JOINT_ID_MAP]
+        )
 
         # Acquire a non-blocking exclusive lock derived from the device real path.
         # If another bridge already holds it, abort early to protect the bus.
@@ -226,9 +306,8 @@ class Hx35hmBridgeNode(Node):
         except Exception as exc:  # noqa: BLE001
             self.get_logger().warn(f"Could not acquire device lock for {device}: {exc}")
 
-        self.get_logger().info(
-            f"Connecting Board on {device}, subscribing commands from {cmd_topic}"
-        )
+        cmd_desc = cmd_topic if enable_command_subscription else "<disabled/read-only>"
+        self.get_logger().info(f"Connecting Board on {device}, command input: {cmd_desc}")
         self.board = Board(device=device)
         self.board.enable_reception()
 
@@ -239,6 +318,16 @@ class Hx35hmBridgeNode(Node):
         # 当前关节的"已知姿态"（用于发布 joint_states），初始设为 0 rad，
         # 后续在 send_positions 中更新。
         self.current_positions: List[float] = [0.0 for _ in self.joint_names]
+        self._last_sent_positions_rad: Dict[str, float] = {}
+        self._pending_stream_joint_names: List[str] | None = None
+        self._pending_stream_positions: List[float] | None = None
+        self._pending_stream_dirty = False
+        self._stream_output_positions: Dict[str, float] = {}
+        self._last_stream_flush_time = time.monotonic()
+        self._write_fail_count = 0
+        self._shutting_down = False
+        self._torque_disabled_by_startup = False
+        self._torque_keepalive_timer = None
         
         # Store targets for readback (must be defined before _do_initial_readback)
         self._readback_targets = [
@@ -250,14 +339,41 @@ class Hx35hmBridgeNode(Node):
         # 启动时立即读取所有舵机位置，避免MoveIt使用错误的状态
         self._initial_readback_done = False
         self._do_initial_readback()
+
+        if self.disable_torque_on_startup:
+            self._set_torque_enabled(False, context="startup")
+            self._torque_disabled_by_startup = True
+            self._start_torque_disable_keepalive()
         
         # 初始化时间戳
         self.last_update_time = self.get_clock().now()
 
-        # 简单命令接口：直接订阅 forward_controller 的 Float64MultiArray 命令
-        self.cmd_sub = self.create_subscription(
-            Float64MultiArray, cmd_topic, self.command_callback, 10
-        )
+        # 简单命令接口：直接订阅 forward_controller 的 Float64MultiArray 命令。
+        # Leader/read-only mode deliberately disables this path so no ROS command
+        # can accidentally load torque or send a target to the hand-drag arm.
+        self.cmd_sub = None
+        if enable_command_subscription:
+            command_qos = QoSProfile(
+                depth=1,
+                reliability=ReliabilityPolicy.BEST_EFFORT,
+            )
+            self.cmd_sub = self.create_subscription(
+                Float64MultiArray, cmd_topic, self.command_callback, command_qos
+            )
+        else:
+            self.get_logger().info("Command subscription disabled; bridge is read-only")
+
+        self.stream_write_timer = None
+        if enable_command_subscription and self.stream_command_async_write:
+            write_period = 1.0 / max(1.0, self.stream_write_rate_hz)
+            self.stream_write_timer = self.create_timer(write_period, self.flush_latest_stream_command)
+            self.get_logger().info(
+                f"Async stream writer enabled at {1.0 / write_period:.1f} Hz"
+            )
+            if self.stream_target_smoothing:
+                self.get_logger().info(
+                    f"Stream target smoothing enabled: max_velocity={self.stream_max_velocity_rad_s:.3f} rad/s"
+                )
 
         # JointState 发布器
         self.joint_state_pub = self.create_publisher(JointState, state_topic, 10)
@@ -274,6 +390,7 @@ class Hx35hmBridgeNode(Node):
         self.readback_timer = None
         self._readback_fail_count = 0
         self._readback_success_count = 0
+        self._consecutive_zero_update_cycles = 0
         self._readback_rr_idx = 0
         self._suspend_readback_until = 0.0
         if enable_readback:
@@ -358,6 +475,14 @@ class Hx35hmBridgeNode(Node):
         for name, angle_rad in zip(joint_names, positions_rad):
             if name not in JOINT_ID_MAP:
                 continue
+            deadband = (
+                self.gripper_command_deadband_rad
+                if name == "gripper"
+                else self.command_position_deadband_rad
+            )
+            last_sent = self._last_sent_positions_rad.get(name)
+            if last_sent is not None and abs(angle_rad - last_sent) <= deadband:
+                continue
             servo_id = JOINT_ID_MAP[name]
             angle_deg = angle_rad * 180.0 / math.pi
             direction = int(self.joint_directions.get(name, 1))
@@ -372,7 +497,8 @@ class Hx35hmBridgeNode(Node):
             bus_positions.append([servo_id, pos_int])
 
             if name == "gripper":
-                self.get_logger().info(
+                log_fn = self.get_logger().info if self.log_gripper_mapping else self.get_logger().debug
+                log_fn(
                     "Gripper command mapping: "
                     f"target_rad={angle_rad:+.3f}, direction={direction}, "
                     f"zero_pos={zero_pos:.1f}, servo_pos={pos_int}, duration={duration:.3f}s"
@@ -405,8 +531,19 @@ class Hx35hmBridgeNode(Node):
 
         try:
             self.board.bus_servo_set_position(duration, bus_positions)
+            self._write_fail_count = 0
+            for name, angle_rad in zip(joint_names, positions_rad):
+                if name in JOINT_ID_MAP:
+                    self._last_sent_positions_rad[name] = angle_rad
         except Exception as exc:  # noqa: BLE001
-            self.get_logger().error(f"Failed to send bus_servo_set_position: {exc}")
+            self._write_fail_count += 1
+            if self._shutting_down or not rclpy.ok():
+                return
+            if self._write_fail_count == 1 or self._write_fail_count % 20 == 0:
+                self.get_logger().error(
+                    "Failed to send bus_servo_set_position "
+                    f"(count={self._write_fail_count}): {exc}"
+                )
 
     def execute_gripper_callback(self, goal_handle):
         """ParallelGripperCommand 动作执行回调（用于 MoveIt gripper_controller）."""
@@ -477,7 +614,56 @@ class Hx35hmBridgeNode(Node):
         duration = self.stream_command_duration
         if duration <= 0.0:
             duration = self.move_duration
-        self.send_positions(joint_names, list(msg.data), duration)
+        if self.suspend_readback_after_stream_command_s > 0.0:
+            self._suspend_readback_until = max(
+                self._suspend_readback_until,
+                time.monotonic() + self.suspend_readback_after_stream_command_s,
+            )
+        positions = list(msg.data)
+        if self.stream_command_async_write:
+            self._pending_stream_joint_names = joint_names
+            self._pending_stream_positions = positions
+            self._pending_stream_dirty = True
+            return
+        self.send_positions(joint_names, positions, duration)
+
+    def flush_latest_stream_command(self) -> None:
+        if not self._pending_stream_dirty:
+            return
+        joint_names = self._pending_stream_joint_names
+        positions = self._pending_stream_positions
+        if joint_names is None or positions is None:
+            self._pending_stream_dirty = False
+            return
+        self._pending_stream_dirty = False
+        duration = self.stream_command_duration
+        if duration <= 0.0:
+            duration = self.move_duration
+        output_positions = self._smooth_stream_targets(list(joint_names), list(positions))
+        self.send_positions(list(joint_names), output_positions, duration)
+
+    def _smooth_stream_targets(self, joint_names: List[str], target_positions: List[float]) -> List[float]:
+        if not self.stream_target_smoothing or self.stream_max_velocity_rad_s <= 0.0:
+            return target_positions
+
+        now = time.monotonic()
+        dt = max(1.0 / max(1.0, self.stream_write_rate_hz), now - self._last_stream_flush_time)
+        self._last_stream_flush_time = now
+        max_step = self.stream_max_velocity_rad_s * dt
+
+        output_positions: List[float] = []
+        for name, target in zip(joint_names, target_positions):
+            previous = self._stream_output_positions.get(name, float(target))
+            delta = float(target) - previous
+            if delta > max_step:
+                output = previous + max_step
+            elif delta < -max_step:
+                output = previous - max_step
+            else:
+                output = float(target)
+            self._stream_output_positions[name] = output
+            output_positions.append(output)
+        return output_positions
 
     def execute_trajectory_callback(self, goal_handle):
         """FollowJointTrajectory 动作执行回调（用于 MoveIt）."""
@@ -747,7 +933,8 @@ class Hx35hmBridgeNode(Node):
                     
                     angle_deg = (pos - zero_pos) / (direction * pos_per_deg)
                     angle_rad = angle_deg * math.pi / 180.0
-                    angle_rad = self._clamp_joint_position(joint_name, angle_rad)
+                    if self.clamp_readback_to_joint_limits:
+                        angle_rad = self._clamp_joint_position(joint_name, angle_rad)
                     self.current_positions[idx] = angle_rad
                     
                     self.get_logger().info(
@@ -758,6 +945,54 @@ class Hx35hmBridgeNode(Node):
         
         self._initial_readback_done = True
         self.get_logger().info("Initial readback complete")
+
+    def _set_torque_enabled(self, enable: bool, *, context: str) -> None:
+        if not self.torque_servo_ids:
+            self.get_logger().warn(f"No torque_servo_ids configured; skipping torque change ({context})")
+            return
+
+        action = "Enabling" if enable else "Disabling"
+        self.get_logger().info(
+            f"{action} torque for servo IDs {self.torque_servo_ids} during {context}"
+        )
+        for attempt in range(self.torque_command_retries):
+            for servo_id in self.torque_servo_ids:
+                try:
+                    self.board.bus_servo_enable_torque(int(servo_id), 1 if enable else 0)
+                    time.sleep(0.02)
+                except Exception as exc:  # noqa: BLE001
+                    self.get_logger().warn(
+                        f"Failed to change torque state for servo {servo_id} during {context}: {exc}"
+                    )
+            if attempt != self.torque_command_retries - 1:
+                time.sleep(max(0.0, self.torque_command_interval_s))
+
+    def _start_torque_disable_keepalive(self) -> None:
+        if not self.maintain_torque_disabled:
+            return
+        if self.torque_disable_keepalive_rate_hz <= 0.0:
+            self.get_logger().warn(
+                "maintain_torque_disabled is true but torque_disable_keepalive_rate_hz <= 0; "
+                "skipping torque disable keepalive"
+            )
+            return
+        if self._torque_keepalive_timer is not None:
+            return
+
+        period = 1.0 / self.torque_disable_keepalive_rate_hz
+        self.get_logger().info(
+            "Starting torque-disable keepalive "
+            f"at {self.torque_disable_keepalive_rate_hz:.2f} Hz"
+        )
+        self._torque_keepalive_timer = self.create_timer(period, self._torque_disable_keepalive_cb)
+
+    def _torque_disable_keepalive_cb(self) -> None:
+        if self._shutting_down or not self._torque_disabled_by_startup:
+            return
+        try:
+            self._set_torque_enabled(False, context="keepalive")
+        except Exception as exc:  # noqa: BLE001
+            self.get_logger().warn(f"Torque-disable keepalive failed: {exc}")
 
     def publish_joint_states(self) -> None:
         # Publish the latest estimate of joint positions.
@@ -829,25 +1064,38 @@ class Hx35hmBridgeNode(Node):
             # invert mapping: angle_deg = (pos - zero_pos) / (direction * pos_per_deg)
             angle_deg = (pos - zero_pos) / (direction * pos_per_deg)
             angle_rad = angle_deg * math.pi / 180.0
-            angle_rad = self._clamp_joint_position(joint_name, angle_rad)
+            if self.clamp_readback_to_joint_limits:
+                angle_rad = self._clamp_joint_position(joint_name, angle_rad)
             self.current_positions[idx] = angle_rad
             updated += 1
             self._readback_success_count += 1
 
-        if updated == 0 and self._readback_fail_count % 50 == 1:
-            # Only warn if device is expected to be connected (not if it's disconnected)
-            try:
-                # Test if device is accessible
-                import os
-                device_param = self.get_parameter("device").get_parameter_value().string_value
-                if os.path.exists(device_param):
-                    self.get_logger().warn("Position readback updated 0 joints (timeouts?). Check wiring/baudrate/power.")
-                else:
-                    # Device file doesn't exist, don't spam warnings
-                    pass
-            except:
-                # If we can't check, just continue
-                pass
+        if updated > 0:
+            self._consecutive_zero_update_cycles = 0
+            return
+
+        self._consecutive_zero_update_cycles += 1
+        # Round-robin mode often sees transient misses on individual polls; only
+        # escalate after a sustained run of zero-update cycles to avoid noisy logs.
+        warn_every = 50 if self.readback_mode == "round_robin" else 10
+        if self._consecutive_zero_update_cycles % warn_every != 1:
+            return
+
+        try:
+            import os
+
+            device_param = self.get_parameter("device").get_parameter_value().string_value
+            if not os.path.exists(device_param):
+                return
+        except Exception:
+            return
+
+        level = self.get_logger().warn if self._readback_success_count > 0 else self.get_logger().info
+        level(
+            "Position readback updated 0 joints for multiple cycles. "
+            "If some servos are intentionally absent this can be benign; "
+            "otherwise check wiring, power, servo IDs, and baudrate."
+        )
 
 
 def main() -> None:
@@ -860,9 +1108,19 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        node._shutting_down = True
         executor.shutdown()
-        node.destroy_node()
-        rclpy.shutdown()
+        if node.restore_torque_on_shutdown and node._torque_disabled_by_startup:
+            try:
+                node._set_torque_enabled(True, context="shutdown")
+            except Exception:
+                pass
+        try:
+            node.destroy_node()
+        except Exception:
+            pass
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

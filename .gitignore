@@ -21,6 +21,7 @@ __pycache__/
 
 # Logs
 *.log
+Log/
 
 # IDE
 .vscode/
@@ -36,6 +37,11 @@ Thumbs.db
 # Nested repo backup when flattening embedded git repos
 *.git.embedded-backup
 archive/
+
+# Large external ROS source checkouts kept local for camera/runtime experiments
+src/OrbbecSDK_ROS2/
+src/OrbbecSDK_ROS2_main/
+src/image_pipeline/
 
 # Environment / secrets
 .env

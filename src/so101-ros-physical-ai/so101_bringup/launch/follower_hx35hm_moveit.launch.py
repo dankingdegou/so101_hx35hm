@@ -63,7 +63,7 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "device": "/dev/ros_robot_controller",
+                "device": "/dev/so101_follower",
                 "publish_joint_states_topic": "joint_states",
                 # Safety-first slow mode for manual GUI/joint commands.
                 "move_duration": 0.8,

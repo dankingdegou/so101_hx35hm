@@ -1,7 +1,7 @@
 # HX35HM Bridge parameters
 hx35hm_bridge:
   ros__parameters:
-    device: "/dev/ros_robot_controller"
+    device: "/dev/so101_follower"
     publish_joint_states_topic: "joint_states"
     enable_follow_joint_trajectory: true
     enable_gripper_action: true

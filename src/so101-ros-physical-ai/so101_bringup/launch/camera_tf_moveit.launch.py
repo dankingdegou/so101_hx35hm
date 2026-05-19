@@ -76,6 +76,36 @@ def generate_launch_description():
                     "--child-frame-id", "cam_overhead_depth",
                 ],
             ),
+            Node(
+                package="tf2_ros",
+                executable="static_transform_publisher",
+                name="tf_overhead_rgb_optical",
+                arguments=[
+                    "--x", "0.0",
+                    "--y", "0.0",
+                    "--z", "0.0",
+                    "--roll", "0.0",
+                    "--pitch", "0.0",
+                    "--yaw", "0.0",
+                    "--frame-id", "cam_overhead",
+                    "--child-frame-id", "static_camera_color_optical_frame",
+                ],
+            ),
+            Node(
+                package="tf2_ros",
+                executable="static_transform_publisher",
+                name="tf_overhead_depth_optical",
+                arguments=[
+                    "--x", "0.0",
+                    "--y", "0.0",
+                    "--z", "0.0",
+                    "--roll", "0.0",
+                    "--pitch", "0.0",
+                    "--yaw", "0.0",
+                    "--frame-id", "cam_overhead_depth",
+                    "--child-frame-id", "static_camera_depth_optical_frame",
+                ],
+            ),
             ExecuteProcess(
                 condition=IfCondition(use_depth_to_rgb_tuner),
                 cmd=[
