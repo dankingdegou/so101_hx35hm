@@ -1,15 +1,13 @@
 /**:
   ros__parameters:
-    mode: "joint_trajectory" # or "forward_position"
     leader_topic: "/leader/joint_states"
     follower_topic: "/follower/joint_states"
-    jtc_topic: "/follower/trajectory_controller/joint_trajectory"
+    trajectory_action_name: "/follower/arm_trajectory_controller/follow_joint_trajectory"
     fwd_topic: "/follower/forward_controller/commands"
     mapping_mode: "relative" # absolute or relative; relative preserves follower startup pose and follows leader deltas
 
     # Timing
     publish_rate_hz: 75.0
-    point_dt_s: 0.04 # time_from_start for trajectory points (40ms = 2x50Hz = 2 * 20ms)
     stale_timeout_s: 0.25 # Stop if no leader data for this long
 
     filter_mode: "lpf" # lpf or alpha_beta
@@ -17,6 +15,12 @@
     alpha_beta_alpha: 0.72
     alpha_beta_beta: 0.06
     prediction_dt_s: 0.02
+    unwrap_leader_angles: true
+    output_deadband_rad: 0.0
+    gripper_output_deadband_rad: 0.0
+    output_keepalive_s: 0.0
+    trajectory_goal_duration_s: 0.04
+    trajectory_goal_points: 1
 
     # Joint Names
     arm_joints:
@@ -26,5 +30,8 @@
       - "wrist_flex"
       - "wrist_roll"
       - "gripper"
-    joint_scales: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    joint_scales: [1.0, 1.0, -1.05, 1.0, 1.0, 1.0]
     joint_offsets: [0.062832, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000]
+    enable_output_limits: true
+    joint_lower_limits: [-1.91986, -1.74533, -1.69000, -1.65806, -2.74385, -0.523599]
+    joint_upper_limits: [1.91986, 1.74533, 1.69000, 1.65806, 2.84121, 1.74533]

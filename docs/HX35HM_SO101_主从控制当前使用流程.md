@@ -13,7 +13,7 @@
   -> /leader/hx35hm_bridge
   -> /leader/joint_states
   -> /follower_command_relay
-  -> /follower/forward_controller/commands
+  -> /follower/arm_trajectory_controller/follow_joint_trajectory
   -> /follower/hx35hm_bridge
   -> 从臂 HX-35HM 舵机
 ```
@@ -22,8 +22,8 @@
 
 ```text
 leader bridge: 只读，不接收控制命令，启动时卸力
-teleop relay: relative mapping
-follower bridge: 异步固定频率写入
+teleop relay: relative mapping + FollowJointTrajectory goal output
+follower bridge: FollowJointTrajectory action execution
 ```
 
 当前已知问题：
@@ -134,9 +134,8 @@ ros2 launch so101_bringup teleop_hx35hm.launch.py \
 [leader.hx35hm_bridge]: Connecting Board on /dev/so101_leader, command input: <disabled/read-only>
 [leader.hx35hm_bridge]: Disabling torque for servo IDs [1, 2, 3, 4, 5, 6] during startup
 [leader.hx35hm_bridge]: Command subscription disabled; bridge is read-only
-[follower.hx35hm_bridge]: Connecting Board on /dev/so101_follower, command input: forward_controller/commands
-[follower.hx35hm_bridge]: Async stream writer enabled at 75.0 Hz
-[follower.hx35hm_bridge]: Stream target smoothing enabled: max_velocity=2.500 rad/s
+[follower.hx35hm_bridge]: FollowJointTrajectory action server ready at 'arm_trajectory_controller/follow_joint_trajectory'
+[follower_command_relay]: FJT action: /follower/arm_trajectory_controller/follow_joint_trajectory
 [follower_command_relay]: Mapping mode: relative
 [follower_command_relay]: Relative teleop ready: follower targets follow leader deltas.
 ```
@@ -160,14 +159,24 @@ mapping_mode: "relative"
 publish_rate_hz: 75.0
 filter_mode: "lpf"
 lpf_alpha: 0.55
-joint_scales: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+unwrap_leader_angles: true
+output_deadband_rad: 0.0
+gripper_output_deadband_rad: 0.0
+output_keepalive_s: 0.0
+trajectory_action_name: "/follower/arm_trajectory_controller/follow_joint_trajectory"
+trajectory_goal_duration_s: 0.04
+trajectory_goal_points: 1
+joint_scales: [1.0, 1.0, -1.05, 1.0, 1.0, 1.0]
 joint_offsets: [0.062832, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000]
+enable_output_limits: true
 ```
 
 说明：
 
 ```text
 joint_offsets[0] = 0.062832 是第一关节 shoulder_pan 的自动标定补偿。
+elbow_flex 当前使用 -1.05 比例修正，并在 relay 内部启用 leader 角度 unwrap 与输出限位。
+当前基线取消输出死区，优先恢复 FJT 跟手性和流畅性。
 alpha-beta filter 已实测抖动明显，当前不推荐启用。
 ```
 
@@ -211,20 +220,23 @@ src/so101-ros-physical-ai/so101_bringup/config/hx35hm_follower_bridge_params.yam
 
 ```yaml
 enable_position_readback: true
-position_readback_rate_hz: 5.0
-stream_command_duration: 0.03
+position_readback_rate_hz: 3.0
+stream_command_duration: 0.06
 stream_command_async_write: true
-stream_write_rate_hz: 75.0
+stream_write_rate_hz: 45.0
 stream_target_smoothing: true
-stream_max_velocity_rad_s: 2.5
+stream_continuous_follow: false
+stream_max_velocity_rad_s: 1.8
+command_position_deadband_rad: 0.012
 suspend_readback_after_stream_command_s: 0.0
 ```
 
 说明：
 
 ```text
-从臂运行时主要服务写命令。
-position_readback_rate_hz 降到 5Hz 是为了减少读写抢总线。
+当前主从默认走 teleop -> FollowJointTrajectory action -> bridge 轨迹执行。
+stream_continuous_follow 已关闭，forward stream 只作为备用命令入口保留。
+position_readback_rate_hz 降到 3Hz 是为了进一步减少读写抢总线。
 启动时仍会做 initial readback，relative teleop 可以捕获 follower baseline。
 ```
 
@@ -254,15 +266,15 @@ ros2 node list
 
 ```bash
 ros2 topic hz /leader/joint_states
-ros2 topic hz /follower/forward_controller/commands
 ros2 topic hz /follower/joint_states
+ros2 action list | rg follow_joint_trajectory
 ```
 
 当前参考：
 
 ```text
 /leader/joint_states ~= 100Hz
-/follower/forward_controller/commands ~= 75Hz
+/follower/arm_trajectory_controller/follow_joint_trajectory 存在
 /follower/joint_states 可能低于 50Hz，属于正常现象
 ```
 
@@ -536,4 +548,3 @@ P2: 保留当前异步写入主从基线
 P3: 评估舵机友好模式是否比高频模式更适合当前硬件
 P4: 长期考虑 STM32 批量状态帧
 ```
-

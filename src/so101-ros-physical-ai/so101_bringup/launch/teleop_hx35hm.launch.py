@@ -106,7 +106,6 @@ def generate_launch_description():
         launch_arguments={
             "leader_namespace": leader_ns,
             "follower_namespace": follower_ns,
-            "arm_controller": "forward_controller",
             "params_file": teleop_params_file,
         }.items(),
     )

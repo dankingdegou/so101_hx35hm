@@ -12,7 +12,6 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     leader_ns = LaunchConfiguration("leader_namespace")
     follower_ns = LaunchConfiguration("follower_namespace")
-    arm_controller = LaunchConfiguration("arm_controller")
     params_file = LaunchConfiguration("params_file")
 
     default_params = PathJoinSubstitution(
@@ -22,29 +21,21 @@ def generate_launch_description():
     # Derived topics from namespaces
     leader_topic = PythonExpression(["'/' + '", leader_ns, "' + '/joint_states'"])
     follower_topic = PythonExpression(["'/' + '", follower_ns, "' + '/joint_states'"])
-    jtc_topic = PythonExpression(
-        ["'/' + '", follower_ns, "' + '/trajectory_controller/joint_trajectory'"]
+    trajectory_action = PythonExpression(
+        [
+            "'/' + '",
+            follower_ns,
+            "' + '/arm_trajectory_controller/follow_joint_trajectory'",
+        ]
     )
     fwd_topic = PythonExpression(
         ["'/' + '", follower_ns, "' + '/forward_controller/commands'"]
-    )
-
-    # Map controller choice to node param
-    arm_mode = PythonExpression(
-        [
-            "'joint_trajectory' if '",
-            arm_controller,
-            "' == 'trajectory_controller' else 'forward_position'",
-        ]
     )
 
     return LaunchDescription(
         [
             DeclareLaunchArgument("leader_namespace", default_value="leader"),
             DeclareLaunchArgument("follower_namespace", default_value="follower"),
-            DeclareLaunchArgument(
-                "arm_controller", default_value="forward_controller"
-            ),  # trajectory_controller|forward_controller
             DeclareLaunchArgument("params_file", default_value=default_params),
             Node(
                 package="so101_teleop",
@@ -54,10 +45,9 @@ def generate_launch_description():
                 parameters=[
                     params_file,
                     {
-                        "arm_mode": arm_mode,
                         "leader_topic": leader_topic,
                         "follower_topic": follower_topic,
-                        "jtc_topic": jtc_topic,
+                        "trajectory_action_name": trajectory_action,
                         "fwd_topic": fwd_topic,
                     },
                 ],

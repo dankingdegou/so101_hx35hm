@@ -1,10 +1,15 @@
+#include <control_msgs/action/follow_joint_trajectory.hpp>
+#include <rclcpp_action/rclcpp_action.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
 #include <trajectory_msgs/msg/joint_trajectory.hpp>
 #include <trajectory_msgs/msg/joint_trajectory_point.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -13,31 +18,34 @@
 class FollowerCommandRelay : public rclcpp::Node
 {
 public:
+  using FollowJointTrajectory = control_msgs::action::FollowJointTrajectory;
+  using GoalHandleFJT = rclcpp_action::ClientGoalHandle<FollowJointTrajectory>;
+
   FollowerCommandRelay() : Node("leader_follower_teleop") {
     RCLCPP_INFO(get_logger(), "Initializing FollowerCommandRelay...");
 
-    // Parameters
-    // Arm output mode:
-    //  - "joint_trajectory" => JointTrajectoryController topic
-    //  - "forward_position" => ForwardController commands topic
-    arm_mode_ = this->declare_parameter<std::string>("arm_mode", "joint_trajectory");
-
     leader_topic_ = declare_parameter<std::string>("leader_topic", "/leader/joint_states");
     follower_topic_ = declare_parameter<std::string>("follower_topic", "/follower/joint_states");
-    follower_jtc_topic_ = declare_parameter<std::string>(
-        "jtc_topic", "/follower/trajectory_controller/joint_trajectory");
+    trajectory_action_name_ = declare_parameter<std::string>(
+        "trajectory_action_name", "/follower/arm_trajectory_controller/follow_joint_trajectory");
     follower_fwd_topic_ =
         declare_parameter<std::string>("fwd_topic", "/follower/forward_controller/commands");
     mapping_mode_ = declare_parameter<std::string>("mapping_mode", "absolute");
 
     publish_rate_hz_ = declare_parameter<double>("publish_rate_hz", 50.0);
     stale_timeout_s_ = declare_parameter<double>("stale_timeout_s", 0.25);
-    point_dt_s_ = declare_parameter<double>("point_dt_s", 0.06);
     filter_mode_ = declare_parameter<std::string>("filter_mode", "lpf");
     lpf_alpha_ = declare_parameter<double>("lpf_alpha", 1.0);
     alpha_beta_alpha_ = declare_parameter<double>("alpha_beta_alpha", 0.75);
     alpha_beta_beta_ = declare_parameter<double>("alpha_beta_beta", 0.08);
     prediction_dt_s_ = declare_parameter<double>("prediction_dt_s", 0.02);
+    unwrap_leader_angles_ = declare_parameter<bool>("unwrap_leader_angles", true);
+    output_deadband_rad_ = declare_parameter<double>("output_deadband_rad", 0.0);
+    gripper_output_deadband_rad_ =
+        declare_parameter<double>("gripper_output_deadband_rad", output_deadband_rad_);
+    output_keepalive_s_ = declare_parameter<double>("output_keepalive_s", 0.0);
+    trajectory_goal_duration_s_ = declare_parameter<double>("trajectory_goal_duration_s", 0.12);
+    trajectory_goal_points_ = declare_parameter<int>("trajectory_goal_points", 3);
 
     arm_joints_ = declare_parameter<std::vector<std::string>>(
         "arm_joints", std::vector<std::string>{"shoulder_pan", "shoulder_lift", "elbow_flex",
@@ -46,6 +54,13 @@ public:
         "joint_scales", std::vector<double>(arm_joints_.size(), 1.0));
     joint_offsets_ = declare_parameter<std::vector<double>>(
         "joint_offsets", std::vector<double>(arm_joints_.size(), 0.0));
+    enable_output_limits_ = declare_parameter<bool>("enable_output_limits", true);
+    joint_lower_limits_ = declare_parameter<std::vector<double>>(
+        "joint_lower_limits",
+        std::vector<double>{-1.91986, -1.74533, -1.69, -1.65806, -2.74385, -0.523599});
+    joint_upper_limits_ = declare_parameter<std::vector<double>>(
+        "joint_upper_limits",
+        std::vector<double>{1.91986, 1.74533, 1.69, 1.65806, 2.84121, 1.74533});
 
     if (joint_scales_.size() != arm_joints_.size()) {
       RCLCPP_WARN(
@@ -61,15 +76,27 @@ public:
           joint_offsets_.size(), arm_joints_.size());
       joint_offsets_.assign(arm_joints_.size(), 0.0);
     }
+    if (joint_lower_limits_.size() != arm_joints_.size() ||
+        joint_upper_limits_.size() != arm_joints_.size()) {
+      RCLCPP_WARN(
+          get_logger(),
+          "joint limit vector length does not match arm_joints; disabling teleop output limits");
+      enable_output_limits_ = false;
+      joint_lower_limits_.assign(arm_joints_.size(), 0.0);
+      joint_upper_limits_.assign(arm_joints_.size(), 0.0);
+    }
 
     filtered_.assign(arm_joints_.size(), 0.0);
+    limit_warned_.assign(arm_joints_.size(), false);
 
     RCLCPP_INFO(get_logger(), "Leader: %s", leader_topic_.c_str());
     RCLCPP_INFO(get_logger(), "Follower state: %s", follower_topic_.c_str());
-    RCLCPP_INFO(get_logger(), "Follower JTC: %s", follower_jtc_topic_.c_str());
+    RCLCPP_INFO(get_logger(), "FJT action: %s", trajectory_action_name_.c_str());
     RCLCPP_INFO(get_logger(), "Mapping mode: %s", mapping_mode_.c_str());
     RCLCPP_INFO(get_logger(), "Rate: %.1f Hz, Arm joints: %zu", publish_rate_hz_,
                 arm_joints_.size());
+    RCLCPP_INFO(get_logger(), "Output deadband: arm=%.4f rad, gripper=%.4f rad",
+                output_deadband_rad_, gripper_output_deadband_rad_);
 
     // ROS interfaces
     leader_sub_ = create_subscription<sensor_msgs::msg::JointState>(
@@ -79,11 +106,11 @@ public:
         follower_topic_, rclcpp::SensorDataQoS(),
         std::bind(&FollowerCommandRelay::follower_state_callback, this, std::placeholders::_1));
 
-    trajectory_pub_ = create_publisher<trajectory_msgs::msg::JointTrajectory>(
-        follower_jtc_topic_, rclcpp::QoS(10).reliable());
     auto forward_command_qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort();
     forward_pub_ =
         create_publisher<std_msgs::msg::Float64MultiArray>(follower_fwd_topic_, forward_command_qos);
+    trajectory_action_client_ =
+        rclcpp_action::create_client<FollowJointTrajectory>(this, trajectory_action_name_);
 
     timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / publish_rate_hz_),
                                std::bind(&FollowerCommandRelay::control_loop, this));
@@ -95,40 +122,54 @@ public:
     follower_home_.resize(arm_joints_.size(), 0.0);
     latest_leader_.resize(arm_joints_.size(), 0.0);
     latest_follower_.resize(arm_joints_.size(), 0.0);
+    previous_leader_raw_.resize(arm_joints_.size(), 0.0);
+    leader_unwrapped_.resize(arm_joints_.size(), 0.0);
+    have_leader_unwrap_.assign(arm_joints_.size(), false);
 
     RCLCPP_INFO(get_logger(), "FollowerCommandRelay initialized.");
   }
 
 private:
   // Parameters
-  std::string arm_mode_;
   std::string leader_topic_;
   std::string follower_topic_;
-  std::string follower_jtc_topic_;
+  std::string trajectory_action_name_;
   std::string follower_fwd_topic_;
   std::string mapping_mode_;
   std::string filter_mode_;
   double publish_rate_hz_{50.0};
   double stale_timeout_s_{0.25};
-  double point_dt_s_{0.02};
   double lpf_alpha_{1.0}; // 1.0 = no filtering
   double alpha_beta_alpha_{0.75};
   double alpha_beta_beta_{0.08};
   double prediction_dt_s_{0.02};
+  double output_deadband_rad_{0.0};
+  double gripper_output_deadband_rad_{0.0};
+  double output_keepalive_s_{0.0};
+  double trajectory_goal_duration_s_{0.12};
+  int trajectory_goal_points_{3};
   bool have_filtered_{false};
   bool have_alpha_beta_{false};
+  bool enable_output_limits_{true};
+  bool unwrap_leader_angles_{true};
   std::vector<std::string> arm_joints_;
   std::vector<double> filtered_;
   std::vector<double> ab_position_;
   std::vector<double> ab_velocity_;
   std::vector<double> joint_scales_;
   std::vector<double> joint_offsets_;
+  std::vector<double> joint_lower_limits_;
+  std::vector<double> joint_upper_limits_;
+  std::vector<bool> limit_warned_;
+  std::vector<double> previous_leader_raw_;
+  std::vector<double> leader_unwrapped_;
+  std::vector<bool> have_leader_unwrap_;
 
   // ROS interfaces
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr leader_sub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr follower_sub_;
-  rclcpp::Publisher<trajectory_msgs::msg::JointTrajectory>::SharedPtr trajectory_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr forward_pub_;
+  rclcpp_action::Client<FollowJointTrajectory>::SharedPtr trajectory_action_client_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   // State
@@ -136,6 +177,7 @@ private:
   bool follower_initialized_{false};
   bool have_leader_home_{false};
   bool have_follower_home_{false};
+  bool have_last_published_{false};
   bool relative_ready_logged_{false};
   std::vector<int> arm_idx_;
   std::vector<int> follower_idx_;
@@ -144,8 +186,12 @@ private:
   std::vector<double> follower_home_;
   std::vector<double> latest_leader_;
   std::vector<double> latest_follower_;
+  std::vector<double> last_published_positions_;
+  std::shared_ptr<GoalHandleFJT> active_goal_handle_;
+  uint64_t latest_goal_sequence_{0};
   rclcpp::Time last_leader_stamp_{0, 0, RCL_ROS_TIME};
   rclcpp::Time last_filter_stamp_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time last_publish_stamp_{0, 0, RCL_ROS_TIME};
 
   void joint_state_callback(const sensor_msgs::msg::JointState::SharedPtr msg) {
 
@@ -153,9 +199,11 @@ private:
 
     last_leader_stamp_ = this->now();
 
-    // Cache leader state and targets.
+    // HX/Hiwonder-style readback can wrap by +/-2*pi near the encoder boundary.
+    // Unwrap before relative mapping so the follower does not inherit a full-turn jump.
     for (size_t i = 0; i < arm_joints_.size(); ++i) {
-      latest_leader_[i] = msg->position[arm_idx_[i]];
+      const double raw_value = msg->position[arm_idx_[i]];
+      latest_leader_[i] = unwrap_leader_angles_ ? unwrap_leader_angle(i, raw_value) : raw_value;
     }
 
     if (mapping_mode_ == "relative") {
@@ -271,7 +319,9 @@ private:
         }
     }
 
-    publish_arm(now, filtered_);
+    const auto command = apply_output_deadband(clamp_output_positions(filtered_), now);
+    if (!command.has_value()) return;
+    send_trajectory_goal(command.value());
   }
 
   void update_alpha_beta_filter(const rclcpp::Time &now) {
@@ -310,26 +360,127 @@ private:
     return value;
   }
 
-  void publish_arm(const rclcpp::Time &time, const std::vector<double> &positions) {
-    if (arm_mode_ == "joint_trajectory") {
-      trajectory_msgs::msg::JointTrajectory jt;
-      jt.header.stamp = time;
-      jt.joint_names = arm_joints_;
+  double unwrap_leader_angle(size_t joint_idx, double raw_value) {
+    if (joint_idx >= have_leader_unwrap_.size()) return raw_value;
 
-      trajectory_msgs::msg::JointTrajectoryPoint pt;
-      pt.positions = positions;
-
-      const int sec = static_cast<int>(point_dt_s_);
-      const int nsec = static_cast<int>((point_dt_s_ - sec) * 1e9);
-      pt.time_from_start.sec = sec;
-      pt.time_from_start.nanosec = nsec;
-      jt.points.push_back(pt);
-      trajectory_pub_->publish(jt);
-    } else {
-      std_msgs::msg::Float64MultiArray cmd;
-      cmd.data = positions;
-      forward_pub_->publish(cmd);
+    if (!have_leader_unwrap_[joint_idx]) {
+      previous_leader_raw_[joint_idx] = raw_value;
+      leader_unwrapped_[joint_idx] = raw_value;
+      have_leader_unwrap_[joint_idx] = true;
+      return raw_value;
     }
+
+    double delta = raw_value - previous_leader_raw_[joint_idx];
+    while (delta > M_PI) delta -= 2.0 * M_PI;
+    while (delta < -M_PI) delta += 2.0 * M_PI;
+
+    previous_leader_raw_[joint_idx] = raw_value;
+    leader_unwrapped_[joint_idx] += delta;
+    return leader_unwrapped_[joint_idx];
+  }
+
+  std::vector<double> clamp_output_positions(const std::vector<double> &positions) {
+    if (!enable_output_limits_) return positions;
+
+    std::vector<double> out = positions;
+    for (size_t i = 0; i < out.size(); ++i) {
+      const double lower = joint_lower_limits_[i];
+      const double upper = joint_upper_limits_[i];
+      if (lower > upper) continue;
+      const double before = out[i];
+      out[i] = std::clamp(before, lower, upper);
+      if (out[i] != before && !limit_warned_[i]) {
+        RCLCPP_WARN(
+            get_logger(),
+            "Clipped teleop output for joint '%s': %.4f -> %.4f within [%.4f, %.4f]. "
+            "Check leader readback zero/direction if this happens often.",
+            arm_joints_[i].c_str(), before, out[i], lower, upper);
+        limit_warned_[i] = true;
+      }
+    }
+    return out;
+  }
+
+  std::optional<std::vector<double>> apply_output_deadband(
+      const std::vector<double> &positions, const rclcpp::Time &now) {
+    if (!have_last_published_) {
+      last_published_positions_ = positions;
+      last_publish_stamp_ = now;
+      have_last_published_ = true;
+      return last_published_positions_;
+    }
+
+    bool should_publish = false;
+    for (size_t i = 0; i < positions.size(); ++i) {
+      const double deadband =
+          arm_joints_[i] == "gripper" ? gripper_output_deadband_rad_ : output_deadband_rad_;
+      if (std::abs(positions[i] - last_published_positions_[i]) > deadband) {
+        should_publish = true;
+        break;
+      }
+    }
+
+    if (should_publish) {
+      last_published_positions_ = positions;
+      last_publish_stamp_ = now;
+      return last_published_positions_;
+    }
+
+    if (output_keepalive_s_ > 0.0 && (now - last_publish_stamp_).seconds() >= output_keepalive_s_) {
+      last_publish_stamp_ = now;
+      return last_published_positions_;
+    }
+
+    return std::nullopt;
+  }
+
+  void send_trajectory_goal(const std::vector<double> &positions) {
+    if (!trajectory_action_client_->action_server_is_ready()) {
+      RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 2000, "FJT action server not ready (%s)",
+          trajectory_action_name_.c_str());
+      return;
+    }
+
+    if (active_goal_handle_) {
+      trajectory_action_client_->async_cancel_goal(active_goal_handle_);
+      active_goal_handle_.reset();
+    }
+
+    const uint64_t goal_sequence = ++latest_goal_sequence_;
+    auto goal = FollowJointTrajectory::Goal();
+    goal.trajectory.joint_names = arm_joints_;
+
+    const int point_count = std::max(1, trajectory_goal_points_);
+    const double total_duration = std::max(0.02, trajectory_goal_duration_s_);
+    for (int i = 1; i <= point_count; ++i) {
+      trajectory_msgs::msg::JointTrajectoryPoint point;
+      point.positions = positions;
+      const double t = total_duration * static_cast<double>(i) / static_cast<double>(point_count);
+      point.time_from_start.sec = static_cast<int32_t>(t);
+      point.time_from_start.nanosec =
+          static_cast<uint32_t>((t - static_cast<double>(point.time_from_start.sec)) * 1e9);
+      goal.trajectory.points.push_back(point);
+    }
+
+    auto send_options = rclcpp_action::Client<FollowJointTrajectory>::SendGoalOptions();
+    send_options.goal_response_callback =
+        [this, goal_sequence](const GoalHandleFJT::SharedPtr &goal_handle) {
+          if (!goal_handle) {
+            RCLCPP_WARN(this->get_logger(), "FJT goal rejected");
+            return;
+          }
+          if (goal_sequence == latest_goal_sequence_) {
+            active_goal_handle_ = goal_handle;
+          }
+        };
+    send_options.result_callback =
+        [this, goal_sequence](const GoalHandleFJT::WrappedResult &) {
+          if (goal_sequence == latest_goal_sequence_) {
+            active_goal_handle_.reset();
+          }
+        };
+    trajectory_action_client_->async_send_goal(goal, send_options);
   }
 };
 

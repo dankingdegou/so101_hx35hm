@@ -73,6 +73,7 @@ class Hx35hmBridgeNode(Node):
         self.declare_parameter("stream_command_async_write", False)
         self.declare_parameter("stream_write_rate_hz", 75.0)
         self.declare_parameter("stream_target_smoothing", False)
+        self.declare_parameter("stream_continuous_follow", True)
         self.declare_parameter("stream_max_velocity_rad_s", 3.0)
         self.declare_parameter("command_position_deadband_rad", 0.002)
         self.declare_parameter("gripper_command_deadband_rad", 0.01)
@@ -151,6 +152,9 @@ class Hx35hmBridgeNode(Node):
         )
         self.stream_target_smoothing = bool(
             self.get_parameter("stream_target_smoothing").get_parameter_value().bool_value
+        )
+        self.stream_continuous_follow = bool(
+            self.get_parameter("stream_continuous_follow").get_parameter_value().bool_value
         )
         self.stream_max_velocity_rad_s = float(
             self.get_parameter("stream_max_velocity_rad_s").get_parameter_value().double_value
@@ -374,6 +378,8 @@ class Hx35hmBridgeNode(Node):
                 self.get_logger().info(
                     f"Stream target smoothing enabled: max_velocity={self.stream_max_velocity_rad_s:.3f} rad/s"
                 )
+            if self.stream_continuous_follow:
+                self.get_logger().info("Continuous stream follow enabled")
 
         # JointState 发布器
         self.joint_state_pub = self.create_publisher(JointState, state_topic, 10)
@@ -641,6 +647,13 @@ class Hx35hmBridgeNode(Node):
             duration = self.move_duration
         output_positions = self._smooth_stream_targets(list(joint_names), list(positions))
         self.send_positions(list(joint_names), output_positions, duration)
+        if self.stream_continuous_follow:
+            max_residual = 0.0
+            for target, output in zip(positions, output_positions):
+                max_residual = max(max_residual, abs(float(target) - float(output)))
+            self._pending_stream_dirty = max_residual > self.command_position_deadband_rad
+        else:
+            self._pending_stream_dirty = False
 
     def _smooth_stream_targets(self, joint_names: List[str], target_positions: List[float]) -> List[float]:
         if not self.stream_target_smoothing or self.stream_max_velocity_rad_s <= 0.0:

@@ -24,6 +24,8 @@ add_executable(teleop src/teleop.cpp)
 # Link dependencies
 ament_target_dependencies(teleop
 	rclcpp
+	rclcpp_action
+	control_msgs
 	std_msgs
   sensor_msgs
   trajectory_msgs)
