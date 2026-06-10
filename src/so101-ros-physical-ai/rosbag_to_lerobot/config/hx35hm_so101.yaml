@@ -1,0 +1,48 @@
+robot_type: "hx35hm_so101"
+fps: 30
+
+# We emit one dataset frame per wrist-camera message.
+reference_topic: "/follower/image_raw"
+
+# Written to every frame.
+task: "Pick and Place"
+default_max_age_s: 0.1
+
+joint_names: &j
+  - shoulder_pan
+  - shoulder_lift
+  - elbow_flex
+  - wrist_flex
+  - wrist_roll
+  - gripper
+
+features:
+  # --- Wrist camera ---
+  - key: "observation.images.wrist"
+    topic: "/follower/image_raw"
+    msg_type: "sensor_msgs/msg/Image"
+    stamp_src: "bag"
+    shape: [480, 640, 3]
+
+  # --- Static/top camera ---
+  - key: "observation.images.top"
+    topic: "/static_camera/image_raw"
+    msg_type: "sensor_msgs/msg/Image"
+    stamp_src: "bag"
+    shape: [480, 640, 3]
+
+  # --- Joint state observation ---
+  - key: "observation.state"
+    topic: "/follower/joint_states"
+    msg_type: "sensor_msgs/msg/JointState"
+    stamp_src: "bag"
+    max_age_s: 0.05
+    names: *j
+
+  # --- Demonstration action mirror from follower_command_relay ---
+  - key: "action"
+    topic: "/follower/learning_action"
+    msg_type: "std_msgs/msg/Float64MultiArray"
+    stamp_src: "bag"
+    max_age_s: 0.05
+    names: *j

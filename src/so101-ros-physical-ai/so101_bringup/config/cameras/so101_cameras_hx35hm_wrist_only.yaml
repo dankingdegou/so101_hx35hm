@@ -1,0 +1,5 @@
+cameras:
+  - name: cam_wrist
+    camera_type: gscam
+    param_path: so101_gs_cam_hx35hm_wrist.yaml
+    namespace: follower

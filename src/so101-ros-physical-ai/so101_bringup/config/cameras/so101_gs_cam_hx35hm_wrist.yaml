@@ -1,0 +1,19 @@
+/**:
+  ros__parameters:
+    camera_info_url: "package://so101_bringup/config/cameras/cam_wrist_calib_placeholder.yaml"
+    use_sensor_data_qos: false
+    sync_sink: false
+    use_gst_timestamps: true
+    image_encoding: "rgb8"
+
+
+/follower/cam_wrist:
+  ros__parameters:
+    frame_id: "cam_wrist"
+    camera_name: "cam_wrist"
+    camera_info_url: "package://so101_bringup/config/cameras/cam_wrist_calib_placeholder.yaml"
+    # Stable by-id path for the current HX35HM wrist UVC RGB camera.
+    gscam_config: >
+      v4l2src device=/dev/v4l/by-id/usb-USB_CAMERA_USB_CAMERA-video-index0 io-mode=2 do-timestamp=true !
+      image/jpeg,width=640,height=480,framerate=30/1 !
+      jpegdec ! videoconvert

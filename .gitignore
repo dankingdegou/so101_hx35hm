@@ -51,3 +51,5 @@ src/image_pipeline/
 # ROS bag / data
 *.bag
 *.db3
+*.mcap
+datasets/

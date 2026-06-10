@@ -3,6 +3,8 @@ follower:
     ros__parameters:
       device: /dev/so101_follower
       command_topic: forward_controller/commands
+      learning_action_topic: learning_action
+      learning_action_keepalive_s: 0.10
       publish_joint_states_topic: joint_states
       enable_follow_joint_trajectory: true
       enable_gripper_action: false

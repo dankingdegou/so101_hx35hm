@@ -68,6 +68,8 @@ class Hx35hmBridgeNode(Node):
         self.declare_parameter("joint_names", list(JOINT_ID_MAP.keys()))
         self.declare_parameter("command_topic", "/follower/forward_controller/commands")
         self.declare_parameter("enable_command_subscription", True)
+        self.declare_parameter("learning_action_topic", "")
+        self.declare_parameter("learning_action_keepalive_s", 0.0)
         self.declare_parameter("move_duration", 0.2)
         self.declare_parameter("stream_command_duration", 0.04)
         self.declare_parameter("stream_command_async_write", False)
@@ -129,6 +131,12 @@ class Hx35hmBridgeNode(Node):
         cmd_topic = self.get_parameter("command_topic").get_parameter_value().string_value
         enable_command_subscription = bool(
             self.get_parameter("enable_command_subscription").get_parameter_value().bool_value
+        )
+        learning_action_topic = (
+            self.get_parameter("learning_action_topic").get_parameter_value().string_value
+        )
+        self.learning_action_keepalive_s = float(
+            self.get_parameter("learning_action_keepalive_s").get_parameter_value().double_value
         )
         joint_names_param = (
             self.get_parameter("joint_names").get_parameter_value().string_array_value
@@ -332,6 +340,7 @@ class Hx35hmBridgeNode(Node):
         self._shutting_down = False
         self._torque_disabled_by_startup = False
         self._torque_keepalive_timer = None
+        self._last_learning_action: List[float] | None = None
         
         # Store targets for readback (must be defined before _do_initial_readback)
         self._readback_targets = [
@@ -366,6 +375,25 @@ class Hx35hmBridgeNode(Node):
             )
         else:
             self.get_logger().info("Command subscription disabled; bridge is read-only")
+
+        self.learning_action_pub = None
+        if learning_action_topic:
+            learning_action_qos = QoSProfile(
+                depth=1,
+                reliability=ReliabilityPolicy.BEST_EFFORT,
+            )
+            self.learning_action_pub = self.create_publisher(
+                Float64MultiArray, learning_action_topic, learning_action_qos
+            )
+            self.get_logger().info(
+                f"Learning action mirror enabled at '{learning_action_topic}'"
+            )
+
+        self.learning_action_timer = None
+        if self.learning_action_pub is not None and self.learning_action_keepalive_s > 0.0:
+            self.learning_action_timer = self.create_timer(
+                self.learning_action_keepalive_s, self._publish_learning_action_keepalive
+            )
 
         self.stream_write_timer = None
         if enable_command_subscription and self.stream_command_async_write:
@@ -626,6 +654,7 @@ class Hx35hmBridgeNode(Node):
                 time.monotonic() + self.suspend_readback_after_stream_command_s,
             )
         positions = list(msg.data)
+        self.publish_learning_action(joint_names, positions)
         if self.stream_command_async_write:
             self._pending_stream_joint_names = joint_names
             self._pending_stream_positions = positions
@@ -754,6 +783,7 @@ class Hx35hmBridgeNode(Node):
                 f"Executing single-point trajectory on {mapped_joint_names} over "
                 f"{single_point_duration:.3f}s"
             )
+            self.publish_learning_action(mapped_joint_names, filtered_points[-1][1])
             self.send_positions(mapped_joint_names, filtered_points[-1][1], single_point_duration)
             settle_deadline = time.monotonic() + single_point_duration
             while time.monotonic() < settle_deadline:
@@ -794,6 +824,7 @@ class Hx35hmBridgeNode(Node):
             f"over {total_duration:.3f}s (sample_dt={sample_dt:.3f}s)"
         )
         final_positions = filtered_points[-1][1]
+        self.publish_learning_action(mapped_joint_names, final_positions)
         try:
             current_by_name = {
                 name: self.current_positions[self.joint_names.index(name)]
@@ -1021,6 +1052,46 @@ class Hx35hmBridgeNode(Node):
         js.velocity = [0.0] * len(self.current_positions)  # Add velocity estimates
         js.effort = [0.0] * len(self.current_positions)   # Add effort estimates
         self.joint_state_pub.publish(js)
+
+    def publish_learning_action(self, joint_names: List[str], positions_rad: List[float]) -> None:
+        if self.learning_action_pub is None:
+            return
+
+        by_name = {
+            name: float(position)
+            for name, position in zip(joint_names, positions_rad)
+            if name in JOINT_ID_MAP
+        }
+        if not by_name:
+            return
+
+        action = []
+        for name in self.joint_names:
+            if name in by_name:
+                action.append(by_name[name])
+            else:
+                try:
+                    action.append(float(self.current_positions[self.joint_names.index(name)]))
+                except ValueError:
+                    action.append(0.0)
+
+        msg = Float64MultiArray()
+        msg.data = action
+        self.learning_action_pub.publish(msg)
+        self._last_learning_action = action
+
+    def _publish_learning_action_keepalive(self) -> None:
+        if self.learning_action_pub is None:
+            return
+
+        action = self._last_learning_action
+        if action is None:
+            action = [float(position) for position in self.current_positions]
+            self._last_learning_action = action
+
+        msg = Float64MultiArray()
+        msg.data = list(action)
+        self.learning_action_pub.publish(msg)
 
     def update_positions_from_readback(self) -> None:
         # Read servo positions sequentially with a timeout (avoid blocking the executor).

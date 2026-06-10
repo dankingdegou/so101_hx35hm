@@ -9,7 +9,14 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
-        ("share/" + package_name + "/config", ["config/so101.yaml"]),
+        (
+            "share/" + package_name + "/config",
+            [
+                "config/so101.yaml",
+                "config/so101_50hz.yaml",
+                "config/hx35hm_so101.yaml",
+            ],
+        ),
     ],
     install_requires=[
         "setuptools",
