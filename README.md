@@ -13,6 +13,12 @@
 
 如果你现在的目标是把机械臂跑起来、能规划、能抓红球，这个仓库就是完整工作区，不是单一功能包。
 
+## 预览 / Preview
+
+![SO101 + HX35HM hardware setup](assets/hardware_setup.jpg)
+
+![RViz planning overview](assets/rviz_planning_overview.png)
+
 ## 系统概览
 
 当前主链路大致是：
