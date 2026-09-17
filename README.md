@@ -15,7 +15,15 @@
 
 ## 🎬 Demo
 
+### 红球视觉识别与抓取
+
+SO101 通过顶视相机识别红球，并执行定位、运动规划与抓取。
+
 https://github.com/user-attachments/assets/63459b54-5808-4aff-9fd8-a557a9e66077
+
+### 主从臂跟随控制
+
+从臂实时跟随主臂动作，展示 HX-35HM 主从遥操作控制效果。
 
 https://github.com/user-attachments/assets/6b907dc1-2aa6-41a9-9c77-5fd130d048e7
 
