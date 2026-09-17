@@ -13,6 +13,12 @@
 
 如果你现在的目标是把机械臂跑起来、能规划、能抓红球，这个仓库就是完整工作区，不是单一功能包。
 
+## 🎬 Demo
+
+https://github.com/user-attachments/assets/6edf200a-91f0-4443-bf34-267c4ab525b0
+
+https://github.com/user-attachments/assets/3ff10642-5e97-4ae3-b169-43f06a9d10ff
+
 ## 预览 / Preview
 
 ![SO101 + HX35HM hardware setup](assets/hardware_setup.jpg)
